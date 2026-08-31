@@ -3,6 +3,15 @@ import { BlurView } from "expo-blur";
 import { Pedometer } from "expo-sensors";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useState, useRef, useEffect } from "react";
+import { useFonts } from "expo-font";
+import {
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+  Inter_800ExtraBold,
+} from "@expo-google-fonts/inter";
+import * as Location from "expo-location";
+import { WebView } from "react-native-webview";
 import {
   Animated,
   Dimensions,
@@ -14,16 +23,11 @@ import {
   View,
   Image,
   Switch,
-  Alert,
   TextInput,
+  Modal,
+  PanResponder,
 } from "react-native";
-import {
-  useFonts,
-  Inter_500Medium,
-  Inter_600SemiBold,
-  Inter_700Bold,
-  Inter_800ExtraBold,
-} from "@expo-google-fonts/inter";
+
 import Svg, {
   Path,
   Circle,
@@ -37,6 +41,8 @@ import Svg, {
 } from "react-native-svg";
 import * as d3 from "d3-shape";
 import * as Haptics from "expo-haptics";
+import { useAppStore } from "./store/useAppStore";
+import Onboarding from "./Onboarding";
 
 const { width: W } = Dimensions.get("window");
 
@@ -80,7 +86,10 @@ function BlockGridChart({ currentSteps = 0 }) {
     "600",
     "300",
   ];
-  const xLabels = ["Wed", "Thu", "Fri", "Mon", "Tue", "Sat", "Sun"];
+  const xLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+  // Calculate today's index in a Mon-Sun week (Mon=0, Sun=6)
+  const todayIdx = (new Date().getDay() + 6) % 7;
 
   // Calculate today's blocks (max 10 blocks, 300 steps per block)
   const filledBlocks = Math.min(10, Math.floor(currentSteps / 300));
@@ -91,15 +100,19 @@ function BlockGridChart({ currentSteps = 0 }) {
   ];
 
   // 0 = empty (dark gray), 1 = filled (muted blue), 2 = active (bright blue)
-  const colData = [
-    [0, 0, 0, 0, 0, 1, 1, 1, 1, 1], // Wed
-    [0, 0, 0, 0, 0, 0, 0, 1, 1, 1], // Thu
-    [0, 0, 0, 0, 1, 1, 1, 1, 1, 1], // Fri
-    todayCol, // Mon (Today)
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // Tue (Future)
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // Sat (Future)
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // Sun (Future)
-  ];
+  const hasSteps = currentSteps > 0;
+
+  const colData = Array.from({ length: 7 }, (_, i) => {
+    if (i === todayIdx) return todayCol;
+    if (i < todayIdx) {
+      // Mock past data
+      return hasSteps
+        ? [0, 0, 0, 0, 0, 1, 1, 1, 1, 1]
+        : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    }
+    // Future days are empty
+    return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  });
 
   return (
     <View style={{ flexDirection: "row", marginTop: 16 }}>
@@ -139,7 +152,21 @@ function BlockGridChart({ currentSteps = 0 }) {
               {col.map((val, rIdx) => {
                 let bg = "#1c1c1e"; // empty
                 if (val === 1) bg = "rgba(60, 168, 255, 0.2)"; // filled
-                if (val === 2) bg = C.blue; // active
+                if (val === 2) {
+                  const depthColors = [
+                    "#002288", // 0 (top, deepest)
+                    "#0033aa", // 1
+                    "#0044cc", // 2
+                    "#0055ee", // 3
+                    "#1166ff", // 4
+                    "#3388ff", // 5
+                    "#55aaff", // 6
+                    "#77ccff", // 7
+                    "#99eeff", // 8
+                    "#bbffff", // 9 (bottom, lightest)
+                  ];
+                  bg = depthColors[rIdx];
+                }
 
                 return (
                   <View
@@ -158,7 +185,7 @@ function BlockGridChart({ currentSteps = 0 }) {
               style={{
                 fontFamily: "Inter_600SemiBold",
                 fontSize: 10,
-                color: cIdx === 3 ? "#fff" : "#555",
+                color: cIdx === todayIdx ? "#fff" : "#555",
               }}
             >
               {xLabels[cIdx]}
@@ -257,8 +284,9 @@ function HeartRateVisual() {
 }
 
 function DeficitVisual({ currentSteps = 0 }) {
-  const deficit = Math.max(0, 10000 - currentSteps);
-  const percent = deficit / 10000;
+  const calorieDeficit = Math.round(currentSteps * 0.04);
+  // Cap visual percent at 1000 active calories
+  const percent = Math.min(1, calorieDeficit / 1000);
   const bars = [...Array(6)].map((_, i) =>
     Math.max(4, 28 * percent * (1 - i * 0.15)),
   );
@@ -406,16 +434,19 @@ function HypnogramChart() {
   );
 }
 
-function SmoothLineChart() {
+function SmoothLineChart({ chartData }) {
   const width = W - 72;
   const height = 160;
-  const rawData = [74.1, 73.8, 73.5, 73.9, 73.2, 72.8, 72.4];
+  const rawData = chartData ? chartData.map(d => d.val) : [74.1, 73.8, 73.5, 73.9, 73.2, 72.8, 72.4];
+  const days = chartData ? chartData.map(d => d.day) : ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const min = Math.min(...rawData) - 1;
   const max = Math.max(...rawData) + 1;
 
   const data = rawData.map((d, i) => ({
     x: i / (rawData.length - 1),
     y: (d - min) / (max - min),
+    val: d,
+    day: days[i],
   }));
 
   const linePath = d3
@@ -431,28 +462,85 @@ function SmoothLineChart() {
     .y1((d) => (1 - d.y) * (height - 40) + 20)
     .curve(d3.curveMonotoneX)(data);
 
+  const [selectedIndex, setSelectedIndex] = useState(null);
+
+  const handleTouch = (evt) => {
+    const touchX = evt.nativeEvent.locationX;
+    let closestIdx = 0;
+    let minDist = Infinity;
+    data.forEach((d, i) => {
+      const px = d.x * width;
+      const dist = Math.abs(px - touchX);
+      if (dist < minDist) {
+        minDist = dist;
+        closestIdx = i;
+      }
+    });
+    setSelectedIndex(closestIdx);
+  };
+
   return (
-    <Svg width={width} height={height} style={{ marginTop: 24 }}>
-      <Defs>
-        <LinearGradient id="orangeGrad" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0" stopColor={C.orange} stopOpacity="0.5" />
-          <Stop offset="1" stopColor={C.orange} stopOpacity="0.0" />
-        </LinearGradient>
-      </Defs>
-      <Path d={areaPath} fill="url(#orangeGrad)" />
-      <Path d={linePath} fill="none" stroke={C.orange} strokeWidth={4} />
-      {data.map((d, i) => (
-        <Circle
-          key={i}
-          cx={d.x * width}
-          cy={(1 - d.y) * (height - 40) + 20}
-          r={5}
-          fill={C.bg}
-          stroke={C.orange}
-          strokeWidth={3}
-        />
-      ))}
-    </Svg>
+    <View style={{ marginTop: 24, position: "relative" }}>
+      {selectedIndex !== null && (
+        <View
+          style={{
+            position: "absolute",
+            top: -20,
+            left: Math.max(0, Math.min(data[selectedIndex].x * width - 24, width - 48)),
+            backgroundColor: C.cardBorder,
+            paddingHorizontal: 8,
+            paddingVertical: 4,
+            borderRadius: 8,
+            alignItems: "center",
+            zIndex: 10,
+          }}
+        >
+          <Text style={{ color: C.text, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>
+            {data[selectedIndex].val}kg
+          </Text>
+        </View>
+      )}
+      <View
+        onStartShouldSetResponder={() => true}
+        onResponderGrant={handleTouch}
+        onResponderMove={handleTouch}
+        onResponderRelease={() => setSelectedIndex(null)}
+      >
+        <Svg width={width} height={height}>
+          <Defs>
+            <LinearGradient id="orangeGrad" x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor={C.orange} stopOpacity="0.5" />
+              <Stop offset="1" stopColor={C.orange} stopOpacity="0.0" />
+            </LinearGradient>
+          </Defs>
+          <Path d={areaPath} fill="url(#orangeGrad)" />
+          <Path d={linePath} fill="none" stroke={C.orange} strokeWidth={4} />
+          {data.map((d, i) => (
+            <G key={i}>
+              {selectedIndex === i && (
+                <SvgLine
+                  x1={d.x * width}
+                  y1={(1 - d.y) * (height - 40) + 20}
+                  x2={d.x * width}
+                  y2={height}
+                  stroke={C.orange}
+                  strokeWidth={1}
+                  strokeDasharray="4 4"
+                />
+              )}
+              <Circle
+                cx={d.x * width}
+                cy={(1 - d.y) * (height - 40) + 20}
+                r={selectedIndex === i ? 7 : 5}
+                fill={selectedIndex === i ? C.orange : C.bg}
+                stroke={C.orange}
+                strokeWidth={3}
+              />
+            </G>
+          ))}
+        </Svg>
+      </View>
+    </View>
   );
 }
 
@@ -721,9 +809,6 @@ function ExtendedBlockGridChart({ currentSteps = 0 }) {
 // ─── DETAIL SCREENS ────────────────────────────────────────────────────────
 
 function ActivityDetailScreen({ onBack, currentSteps = 0 }) {
-  const fakePastSteps = 48420; // Simulated historical total for demo
-  const totalThreeWeeks = fakePastSteps + currentSteps;
-
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <View
@@ -773,7 +858,7 @@ function ActivityDetailScreen({ onBack, currentSteps = 0 }) {
               marginBottom: 4,
             }}
           >
-            Total Steps (3 Weeks)
+            Total Steps (Last 7 Days)
           </Text>
           <Text
             style={{
@@ -783,7 +868,7 @@ function ActivityDetailScreen({ onBack, currentSteps = 0 }) {
               letterSpacing: -2,
             }}
           >
-            {totalThreeWeeks.toLocaleString()}
+            {currentSteps.toLocaleString()}
           </Text>
         </View>
 
@@ -942,7 +1027,7 @@ function SleepDetailScreen({ onBack, sleepHours = 0, sleepMins = 0, setSleepHour
             >
               <Ionicons name="remove" size={24} color="#fff" />
             </TouchableOpacity>
-            
+
             <View style={{ justifyContent: 'center', paddingHorizontal: 12 }}>
               <Text style={{ fontFamily: "Inter_600SemiBold", color: "#fff", fontSize: 16 }}>Log Sleep</Text>
             </View>
@@ -1202,6 +1287,555 @@ function SleepDetailScreen({ onBack, sleepHours = 0, sleepMins = 0, setSleepHour
   );
 }
 
+// ─── RUNNING TRACKER ────────────────────────────────────────────────────────
+
+const getDistance = (start, end) => {
+  const R = 6371e3; // metres
+  const lat1 = (start.latitude * Math.PI) / 180;
+  const lat2 = (end.latitude * Math.PI) / 180;
+  const deltaLat = ((end.latitude - start.latitude) * Math.PI) / 180;
+  const deltaLon = ((end.longitude - start.longitude) * Math.PI) / 180;
+
+  const a =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(lat1) *
+    Math.cos(lat2) *
+    Math.sin(deltaLon / 2) *
+    Math.sin(deltaLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+};
+
+const customDarkMapStyle = [
+  { elementType: 'geometry', stylers: [{ color: '#000000' }] },
+  { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#757575' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#212121' }] },
+  { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#757575' }] },
+  { featureType: 'administrative.country', elementType: 'labels.text.fill', stylers: [{ color: '#9e9e9e' }] },
+  { featureType: 'administrative.land_parcel', stylers: [{ visibility: 'off' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#bdbdbd' }] },
+  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#757575' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#181818' }] },
+  { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#616161' }] },
+  { featureType: 'poi.park', elementType: 'labels.text.stroke', stylers: [{ color: '#1b1b1b' }] },
+  { featureType: 'road', elementType: 'geometry.fill', stylers: [{ color: '#2c2c2c' }] },
+  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#8a8a8a' }] },
+  { featureType: 'road.arterial', elementType: 'geometry', stylers: [{ color: '#373737' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3c3c3c' }] },
+  { featureType: 'road.highway.controlled_access', elementType: 'geometry', stylers: [{ color: '#4e4e4e' }] },
+  { featureType: 'road.local', elementType: 'labels.text.fill', stylers: [{ color: '#616161' }] },
+  { featureType: 'transit', elementType: 'labels.text.fill', stylers: [{ color: '#757575' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#000000' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#3d3d3d' }] },
+];
+
+function projectCoordinates(coords, width, height, padding = 40) {
+  if (coords.length === 0) return { pathString: "", currentPoint: null };
+  if (coords.length === 1) {
+    const cx = width / 2;
+    const cy = height / 2;
+    return {
+      pathString: `M ${cx},${cy}`,
+      currentPoint: { x: cx, y: cy }
+    };
+  }
+
+  const lats = coords.map(c => c.latitude);
+  const lons = coords.map(c => c.longitude);
+
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons);
+  const maxLon = Math.max(...lons);
+
+  const latRange = maxLat - minLat || 0.001;
+  const lonRange = maxLon - minLon || 0.001;
+
+  const avgLat = (minLat + maxLat) / 2;
+  const lonScale = Math.cos(avgLat * Math.PI / 180);
+
+  const adjLonRange = lonRange * lonScale;
+
+  const usableWidth = width - padding * 2;
+  const usableHeight = height - padding * 2;
+
+  const scaleX = usableWidth / adjLonRange;
+  const scaleY = usableHeight / latRange;
+
+  const scale = Math.min(scaleX, scaleY);
+
+  const xOffset = padding + (usableWidth - (adjLonRange * scale)) / 2;
+  const yOffset = padding + (usableHeight - (latRange * scale)) / 2;
+
+  const points = coords.map(c => {
+    const x = xOffset + ((c.longitude - minLon) * lonScale) * scale;
+    const y = yOffset + (usableHeight - ((c.latitude - minLat) * scale));
+    return { x, y };
+  });
+
+  const pathString = "M " + points.map(p => `${p.x},${p.y}`).join(" L ");
+  return {
+    pathString,
+    currentPoint: points[points.length - 1]
+  };
+}
+
+function RunningTracker({ onClose, onUIToggle, scrollY }) {
+  const startRun = useAppStore((s) => s.startRun);
+  const endRun = useAppStore((s) => s.endRun);
+  const runs = useAppStore((s) => s.runs);
+
+  const [hasPermission, setHasPermission] = useState(null);
+  const [isTracking, setIsTracking] = useState(false);
+  const [routeCoordinates, setRouteCoordinates] = useState([]);
+  const [distance, setDistance] = useState(0); // in meters
+  const [duration, setDuration] = useState(0); // in seconds
+  const [currentRegion, setCurrentRegion] = useState(null);
+  const [isUIVisible, setIsUIVisible] = useState(true);
+
+  const locationSubscription = useRef(null);
+  const timerInterval = useRef(null);
+  const webViewRef = useRef(null);
+  const uiOpacity = useRef(new Animated.Value(1)).current;
+
+  const screenWidth = Dimensions.get('window').width;
+  const screenHeight = Dimensions.get('window').height;
+
+  // Bottom Sheet Swipe Physics (Bulletproof Implementation)
+  const sheetHeight = screenHeight * 0.85; // Covers 85% of screen when expanded
+  const collapsedHeight = 250;
+  const maxTranslateY = sheetHeight - collapsedHeight;
+
+  const panY = useRef(new Animated.Value(maxTranslateY)).current;
+  const lastPanY = useRef(maxTranslateY);
+
+  useEffect(() => {
+    // Force reset on mount in case of hot reload
+    panY.setValue(maxTranslateY);
+    lastPanY.current = maxTranslateY;
+  }, [maxTranslateY]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 5,
+      onPanResponderGrant: () => {
+        // Do nothing, we track state manually via lastPanY
+      },
+      onPanResponderMove: (_, gestureState) => {
+        let newY = lastPanY.current + gestureState.dy;
+        if (newY < 0) newY = 0; // clamp top (fully expanded)
+        if (newY > maxTranslateY) newY = maxTranslateY; // clamp bottom (fully collapsed)
+        panY.setValue(newY);
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        let newY = lastPanY.current + gestureState.dy;
+        let toValue = maxTranslateY; // default to collapse
+
+        // Determine snap point based on velocity or drag distance
+        if (gestureState.vy < -0.5) {
+          toValue = 0;
+        } else if (gestureState.vy > 0.5) {
+          toValue = maxTranslateY;
+        } else if (newY < maxTranslateY / 2) {
+          toValue = 0;
+        }
+
+        Animated.spring(panY, {
+          toValue,
+          tension: 60,
+          friction: 9,
+          useNativeDriver: true
+        }).start();
+
+        lastPanY.current = toValue;
+      }
+    })
+  ).current;
+
+  const toggleSheet = () => {
+    const isExpanded = lastPanY.current === 0;
+    const toValue = isExpanded ? maxTranslateY : 0;
+
+    Animated.spring(panY, {
+      toValue,
+      tension: 60,
+      friction: 9,
+      useNativeDriver: true
+    }).start();
+    lastPanY.current = toValue;
+  };
+
+  useEffect(() => {
+    Animated.timing(uiOpacity, {
+      toValue: isUIVisible ? 1 : 0,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+
+    if (onUIToggle) {
+      onUIToggle(isUIVisible);
+    }
+  }, [isUIVisible]);
+
+  useEffect(() => {
+    if (webViewRef.current && routeCoordinates.length > 0) {
+      const latLngs = routeCoordinates.map(c => [c.latitude, c.longitude]);
+      webViewRef.current.injectJavaScript(`
+        if (typeof polyline !== 'undefined' && typeof circle !== 'undefined' && typeof map !== 'undefined') {
+          var coords = ${JSON.stringify(latLngs)};
+          polyline.setLatLngs(coords);
+          var lastCoord = coords[coords.length - 1];
+          circle.setLatLng(lastCoord);
+          map.panTo(lastCoord);
+        }
+        true;
+      `);
+    }
+  }, [routeCoordinates]);
+
+  useEffect(() => {
+    (async () => {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      setHasPermission(status === 'granted');
+      if (status === 'granted') {
+        let loc = await Location.getCurrentPositionAsync({});
+        setCurrentRegion({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+          latitudeDelta: 0.005,
+          longitudeDelta: 0.005,
+        });
+      }
+    })();
+  }, []);
+
+  const startTracking = async () => {
+    if (!hasPermission) {
+      Alert.alert("Permission denied", "Allow location access to track runs.");
+      return;
+    }
+    setRouteCoordinates([]);
+    setDistance(0);
+    setDuration(0);
+    setIsTracking(true);
+    startRun(); // Write to store
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    locationSubscription.current = await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.High,
+        timeInterval: 2000,
+        distanceInterval: 5,
+      },
+      (loc) => {
+        const { latitude, longitude } = loc.coords;
+        const newCoord = { latitude, longitude };
+
+        setRouteCoordinates(prev => {
+          if (prev.length > 0) {
+            const lastCoord = prev[prev.length - 1];
+            const dist = getDistance(lastCoord, newCoord);
+            setDistance(d => d + dist);
+          }
+          return [...prev, newCoord];
+        });
+      }
+    );
+
+    timerInterval.current = setInterval(() => {
+      setDuration(d => d + 1);
+    }, 1000);
+  };
+
+  const stopTracking = () => {
+    setIsTracking(false);
+
+    // Save to store only if some distance was covered
+    if (distance > 10) {
+      endRun({ distanceMeters: distance, durationSec: duration, route: routeCoordinates });
+    } else {
+      endRun({ distanceMeters: 0, durationSec: 0, route: [] }); // Or we might not save if it's too short
+    }
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    if (locationSubscription.current) {
+      locationSubscription.current.remove();
+      locationSubscription.current = null;
+    }
+    if (timerInterval.current) {
+      clearInterval(timerInterval.current);
+      timerInterval.current = null;
+    }
+  };
+
+  const formatTime = (secs) => {
+    const m = Math.floor(secs / 60).toString().padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
+  const distanceKm = distance / 1000;
+  let paceStr = "--:--";
+  if (distanceKm > 0) {
+    const paceSecs = duration / distanceKm;
+    paceStr = formatTime(Math.round(paceSecs));
+  }
+
+  const { pathString, currentPoint } = projectCoordinates(routeCoordinates, screenWidth, screenHeight, 60);
+
+  if (hasPermission === false) {
+    return (
+      <View style={{ height: screenHeight, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
+        <Text style={{ color: C.muted, fontFamily: 'Inter_500Medium' }}>Location permission denied.</Text>
+      </View>
+    );
+  }
+
+  if (!currentRegion) {
+    return (
+      <View style={{ height: screenHeight, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
+        <Text style={{ color: C.muted, fontFamily: 'Inter_500Medium', marginTop: 16 }}>Locating GPS...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ height: screenHeight, backgroundColor: '#000' }}>
+
+      <WebView
+        ref={webViewRef}
+        style={StyleSheet.absoluteFillObject}
+        scrollEnabled={false}
+        showsHorizontalScrollIndicator={false}
+        showsVerticalScrollIndicator={false}
+        source={{
+          html: `
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+              <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+              <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+              <style>
+                body { padding: 0; margin: 0; background-color: #000; overflow: hidden; }
+                #map { height: 100vh; width: 100vw; background-color: #000; }
+                .leaflet-control-attribution { display: none !important; }
+                .leaflet-control-zoom { display: none !important; }
+                
+                /* Invert OSM tiles to create a gorgeous Dark Mode */
+                .leaflet-layer,
+                .leaflet-control-zoom-in,
+                .leaflet-control-zoom-out,
+                .leaflet-control-attribution {
+                  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+                }
+              </style>
+            </head>
+            <body>
+              <div id="map"></div>
+              <script>
+                var map = L.map('map', { zoomControl: false, attributionControl: false }).setView([${currentRegion.latitude}, ${currentRegion.longitude}], 16);
+                
+                map.on('click', function() {
+                  window.ReactNativeWebView.postMessage("TOGGLE_UI");
+                });
+
+                // Use completely free standard OpenStreetMap tiles (the CSS filter above makes them dark)
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                  maxZoom: 19
+                }).addTo(map);
+
+                var polyline = L.polyline([], {
+                  color: '#3CA8FF',
+                  weight: 6,
+                  opacity: 1,
+                  lineJoin: 'round',
+                  lineCap: 'round'
+                }).addTo(map);
+
+                var circle = L.circleMarker([${currentRegion.latitude}, ${currentRegion.longitude}], {
+                  color: '#3CA8FF',
+                  fillColor: '#3CA8FF',
+                  fillOpacity: 1,
+                  radius: 7,
+                  weight: 2
+                }).addTo(map);
+              </script>
+            </body>
+            </html>
+          `
+        }}
+        onMessage={(event) => {
+          if (event.nativeEvent.data === "TOGGLE_UI") {
+            setIsUIVisible(prev => !prev);
+          }
+        }}
+      />
+
+      <Animated.View
+        style={[StyleSheet.absoluteFillObject, { opacity: uiOpacity }]}
+        pointerEvents={isUIVisible ? "box-none" : "none"}
+      >
+        {/* Top Floating Icons */}
+        <View style={{ position: 'absolute', top: 60, left: 24, right: 24, flexDirection: 'row', justifyContent: 'space-between' }}>
+          <TouchableOpacity style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(28,28,30,0.8)', justifyContent: 'center', alignItems: 'center' }}>
+            <Ionicons name="location-outline" size={24} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(28,28,30,0.8)', justifyContent: 'center', alignItems: 'center' }}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              if (onClose) onClose();
+            }}
+          >
+            <Ionicons name="close" size={24} color="#fff" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Bottom Sheet Panel (Runbuds style - Draggable) */}
+        <Animated.View
+          {...panResponder.panHandlers}
+          style={{
+            position: 'absolute', bottom: 0, left: 0, right: 0, height: sheetHeight,
+            backgroundColor: '#000000',
+            borderTopLeftRadius: 36, borderTopRightRadius: 36,
+            borderTopWidth: 1, borderTopColor: '#333',
+            paddingTop: 16, paddingHorizontal: 24,
+            shadowColor: '#000', shadowOffset: { width: 0, height: -10 }, shadowOpacity: 0.8, shadowRadius: 30,
+            elevation: 24,
+            transform: [{ translateY: panY }]
+          }}
+        >
+          {/* Drag Handle (Interactive via Tap & Swipe) */}
+          <TouchableOpacity
+            onPress={toggleSheet}
+            activeOpacity={0.7}
+            style={{ width: '100%', paddingVertical: 12, alignItems: 'center', marginBottom: 12 }}
+          >
+            <View style={{ width: 48, height: 5, borderRadius: 3, backgroundColor: '#888' }} />
+          </TouchableOpacity>
+
+          {/* Title & Action Button */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons
+                name={isTracking ? "pulse" : "walk"}
+                size={24}
+                color={isTracking ? "#ff3b30" : C.cyan}
+                style={{ marginRight: 10 }}
+              />
+              <Text style={{ color: '#fff', fontSize: 24, fontFamily: 'Inter_600SemiBold' }}>
+                {isTracking ? "Active Run" : "Ready to Run"}
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              onPress={isTracking ? stopTracking : startTracking}
+              style={{
+                width: 52, height: 52, borderRadius: 26,
+                backgroundColor: isTracking ? '#ff3b30' : C.cyan,
+                justifyContent: 'center', alignItems: 'center',
+              }}
+            >
+              <Ionicons name={isTracking ? "square" : "play"} size={26} color={isTracking ? "#fff" : "#000"} style={isTracking ? {} : { marginLeft: 3 }} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Main Metrics Row */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 28 }}>
+            <View>
+              <Text style={{ fontFamily: 'monospace', color: '#fff', fontSize: 28, fontWeight: '800' }}>
+                {distanceKm.toFixed(2)}
+              </Text>
+              <Text style={{ fontFamily: 'Inter_500Medium', color: '#888', fontSize: 11, marginTop: 4, letterSpacing: 1.2 }}>KM</Text>
+            </View>
+            <View>
+              <Text style={{ fontFamily: 'monospace', color: '#fff', fontSize: 28, fontWeight: '800' }}>
+                {formatTime(duration)}
+              </Text>
+              <Text style={{ fontFamily: 'Inter_500Medium', color: '#888', fontSize: 11, marginTop: 4, letterSpacing: 1.2 }}>TIME</Text>
+            </View>
+            <View>
+              <Text style={{ fontFamily: 'monospace', color: '#fff', fontSize: 28, fontWeight: '800' }}>
+                {paceStr}
+              </Text>
+              <Text style={{ fontFamily: 'Inter_500Medium', color: '#888', fontSize: 11, marginTop: 4, letterSpacing: 1.2 }}>PACE</Text>
+            </View>
+          </View>
+
+          {/* Separator */}
+          <View style={{ height: 1, backgroundColor: '#333', marginBottom: 24 }} />
+
+          {/* Secondary Stats Row */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: 'Inter_500Medium', color: '#888', fontSize: 10, letterSpacing: 1.5, marginBottom: 4 }}>SPLIT</Text>
+              <Text style={{ fontFamily: 'monospace', color: '#fff', fontSize: 16, fontWeight: '600' }}>{distanceKm > 0.5 ? "5:30" : "--"}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: 'Inter_500Medium', color: '#888', fontSize: 10, letterSpacing: 1.5, marginBottom: 4 }}>AVG PACE</Text>
+              <Text style={{ fontFamily: 'monospace', color: '#fff', fontSize: 16, fontWeight: '600' }}>{paceStr}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: 'Inter_500Medium', color: '#888', fontSize: 10, letterSpacing: 1.5, marginBottom: 4 }}>HR</Text>
+              <Text style={{ fontFamily: 'monospace', color: '#fff', fontSize: 16, fontWeight: '600' }}>--</Text>
+            </View>
+          </View>
+
+          {/* Past Runs History */}
+          <View style={{ flex: 1, marginTop: 32 }}>
+            <Text style={{ fontFamily: 'Inter_700Bold', color: '#666', fontSize: 12, letterSpacing: 1, marginBottom: 16 }}>PAST RUNS</Text>
+            <Animated.ScrollView 
+              showsVerticalScrollIndicator={false} 
+              contentContainerStyle={{ paddingBottom: 40 }}
+              onScroll={scrollY ? Animated.event(
+                [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                { useNativeDriver: true }
+              ) : undefined}
+              scrollEventThrottle={16}
+            >
+              {(!runs || !Array.isArray(runs) || runs.length === 0) ? (
+                <View style={{ alignItems: 'center', marginTop: 24 }}>
+                  <Ionicons name="map-outline" size={48} color="#222" />
+                  <Text style={{ color: '#444', fontFamily: 'Inter_500Medium', marginTop: 16 }}>No runs yet. Start moving!</Text>
+                </View>
+              ) : (
+                runs.slice().reverse().map((run, idx) => {
+                  if (!run) return null;
+                  const dist = typeof run.distanceKm === 'number' ? run.distanceKm.toFixed(2) : '0.00';
+                  const cals = typeof run.caloriesBurned === 'number' ? run.caloriesBurned : 0;
+                  const dateStr = run.date ? new Date(run.date).toLocaleDateString() : 'N/A';
+                  const durStr = formatTime(typeof run.durationSec === 'number' ? run.durationSec : 0);
+
+                  return (
+                    <View key={run.id || idx} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', padding: 16, borderRadius: 16, marginBottom: 12 }}>
+                      <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(60, 168, 255, 0.1)', justifyContent: 'center', alignItems: 'center', marginRight: 16 }}>
+                        <Ionicons name="walk" size={20} color={C.cyan} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: '#fff', fontFamily: 'Inter_600SemiBold', fontSize: 16 }}>{dist} KM</Text>
+                        <Text style={{ color: '#888', fontFamily: 'Inter_500Medium', fontSize: 12, marginTop: 4 }}>
+                          {dateStr} - {durStr}
+                        </Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={{ color: '#fff', fontFamily: 'Inter_600SemiBold', fontSize: 14 }}>{cals} kcal</Text>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </Animated.ScrollView>
+          </View>
+        </Animated.View>
+
+      </Animated.View>
+    </View>
+  );
+}
+
 // ─── WATER DETAIL SCREEN ──────────────────────────────────────────────────
 
 function WaterDetailScreen({ onBack, waterGlasses = 0, setWaterGlasses }) {
@@ -1258,10 +1892,10 @@ function WaterDetailScreen({ onBack, waterGlasses = 0, setWaterGlasses }) {
         showsVerticalScrollIndicator={false}
       >
         <View style={{ alignItems: 'center', marginBottom: 32 }}>
-           <Text style={{ fontFamily: "Inter_800ExtraBold", fontSize: 56, color: C.blue, letterSpacing: -2 }}>
-              {(waterGlasses * 0.25).toFixed(1)}L
-           </Text>
-           <View style={{ flexDirection: "row", gap: 12, marginTop: 12 }}>
+          <Text style={{ fontFamily: "Inter_800ExtraBold", fontSize: 56, color: C.blue, letterSpacing: -2 }}>
+            {(waterGlasses * 0.25).toFixed(1)}L
+          </Text>
+          <View style={{ flexDirection: "row", gap: 12, marginTop: 12 }}>
             <TouchableOpacity
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -1271,7 +1905,7 @@ function WaterDetailScreen({ onBack, waterGlasses = 0, setWaterGlasses }) {
             >
               <Ionicons name="remove" size={24} color="#fff" />
             </TouchableOpacity>
-            
+
             <View style={{ justifyContent: 'center', paddingHorizontal: 12 }}>
               <Text style={{ fontFamily: "Inter_600SemiBold", color: "#fff", fontSize: 16 }}>1 Glass</Text>
             </View>
@@ -1290,7 +1924,7 @@ function WaterDetailScreen({ onBack, waterGlasses = 0, setWaterGlasses }) {
 
         {/* Liquid Tank */}
         <View style={{ alignItems: "center" }}>
-           <LiquidTankChart waterLiters={waterGlasses * 0.25} />
+          <LiquidTankChart waterLiters={waterGlasses * 0.25} />
         </View>
 
         {/* Sub Metrics */}
@@ -1302,7 +1936,7 @@ function WaterDetailScreen({ onBack, waterGlasses = 0, setWaterGlasses }) {
           <View style={[s.card, { flex: 1, marginLeft: 8, padding: 16 }]}>
             <Text style={{ fontFamily: "Inter_500Medium", fontSize: 12, color: C.muted, marginBottom: 4 }}>Remaining</Text>
             <Text style={{ fontFamily: "Inter_700Bold", fontSize: 20, color: C.cyan }}>
-               {Math.max(0, 2.5 - (waterGlasses * 0.25)).toFixed(1)}L
+              {Math.max(0, 2.5 - (waterGlasses * 0.25)).toFixed(1)}L
             </Text>
           </View>
         </View>
@@ -1314,6 +1948,8 @@ function WaterDetailScreen({ onBack, waterGlasses = 0, setWaterGlasses }) {
 // ─── WEIGHT DETAIL SCREEN ─────────────────────────────────────────────────
 
 function WeightDetailScreen({ onBack, weightKg = 0, setWeightKg }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [tempWeight, setTempWeight] = useState(weightKg > 0 ? String(weightKg) : "");
   const chartData = [
     { day: "Mon", val: 74.1 },
     { day: "Tue", val: 73.8 },
@@ -1321,8 +1957,9 @@ function WeightDetailScreen({ onBack, weightKg = 0, setWeightKg }) {
     { day: "Thu", val: 73.9 },
     { day: "Fri", val: 73.2 },
     { day: "Sat", val: 72.8 },
-    { day: "Sun", val: 72.4 },
+    { day: "Today", val: weightKg > 0 ? weightKg : 72.4 },
   ];
+
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <View
@@ -1362,35 +1999,83 @@ function WeightDetailScreen({ onBack, weightKg = 0, setWeightKg }) {
         style={{ flex: 1 }}
         contentContainerStyle={{ padding: 16 }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         <View style={{ alignItems: "center", marginTop: 16, marginBottom: 32 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center' }}>
-            <TextInput
-              style={{
-                fontFamily: "Inter_800ExtraBold",
-                fontSize: 56,
-                color: C.orange,
-                letterSpacing: -2,
-                minWidth: 100,
-                textAlign: 'center',
-                padding: 0,
-                margin: 0,
+          {isEditing ? (
+            <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center' }}>
+              <TextInput
+                style={{
+                  fontFamily: "Inter_800ExtraBold",
+                  fontSize: 56,
+                  color: "#fff",
+                  letterSpacing: -2,
+                  padding: 0,
+                  margin: 0,
+                }}
+                value={tempWeight}
+                onChangeText={setTempWeight}
+                keyboardType="decimal-pad"
+                autoFocus={true}
+                cursorColor={C.orange}
+                selectionColor={C.orange}
+                returnKeyType="done"
+                onBlur={() => {
+                  setIsEditing(false);
+                  const p = parseFloat(tempWeight);
+                  if (!isNaN(p)) setWeightKg(p);
+                }}
+                onSubmitEditing={() => {
+                  setIsEditing(false);
+                  const p = parseFloat(tempWeight);
+                  if (!isNaN(p)) setWeightKg(p);
+                }}
+              />
+              <Text style={{ fontFamily: "Inter_800ExtraBold", fontSize: 32, color: C.orange, marginBottom: 8, marginLeft: 4 }}>kg</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setIsEditing(false);
+                  const p = parseFloat(tempWeight);
+                  if (!isNaN(p)) setWeightKg(p);
+                }}
+                style={{
+                  marginLeft: 16,
+                  marginBottom: 12,
+                  backgroundColor: C.orange,
+                  width: 36,
+                  height: 36,
+                  borderRadius: 18,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Ionicons name="checkmark" size={20} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center' }}
+              onPress={() => {
+                setTempWeight(weightKg > 0 ? String(weightKg) : "");
+                setIsEditing(true);
               }}
-              value={weightKg > 0 ? String(weightKg) : ""}
-              placeholder="0.0"
-              placeholderTextColor="rgba(255, 92, 0, 0.3)"
-              keyboardType="numeric"
-              onChangeText={(text) => {
-                const parsed = parseFloat(text);
-                if (!isNaN(parsed)) {
-                  setWeightKg(parsed);
-                } else if (text === "") {
-                  setWeightKg(0);
-                }
-              }}
-            />
-            <Text style={{ fontFamily: "Inter_800ExtraBold", fontSize: 32, color: C.orange, marginBottom: 8, marginLeft: 4 }}>kg</Text>
-          </View>
+            >
+              <Text
+                style={{
+                  fontFamily: "Inter_800ExtraBold",
+                  fontSize: 56,
+                  color: "#fff",
+                  letterSpacing: -2,
+                  textAlign: 'center',
+                  minWidth: 100,
+                }}
+              >
+                {weightKg > 0 ? String(weightKg) : "--"}
+              </Text>
+              <Text style={{ fontFamily: "Inter_800ExtraBold", fontSize: 32, color: C.orange, marginBottom: 8, marginLeft: 4 }}>kg</Text>
+            </TouchableOpacity>
+          )}
+
           <Text
             style={{
               fontFamily: "Inter_500Medium",
@@ -1399,7 +2084,7 @@ function WeightDetailScreen({ onBack, weightKg = 0, setWeightKg }) {
               marginTop: 4,
             }}
           >
-            Current Weight
+            Tap weight to log today's entry
           </Text>
         </View>
         <View style={s.card}>
@@ -1407,7 +2092,7 @@ function WeightDetailScreen({ onBack, weightKg = 0, setWeightKg }) {
             <Text style={s.cardTitle}>7-Day Trend</Text>
             <Ionicons name="trending-down" size={16} color={C.orange} />
           </View>
-          <SmoothLineChart />
+          <SmoothLineChart chartData={chartData} />
           <View
             style={{
               flexDirection: "row",
@@ -1653,12 +2338,17 @@ function HeartRateDetailScreen({ onBack, heartRate = 0, setHeartRate }) {
 
 // ─── SUMMARY DETAIL SCREEN ────────────────────────────────────────────────
 
-function SummaryDetailScreen({ onBack, currentSteps = 0 }) {
-  const distance = (currentSteps * 0.00044).toFixed(2);
-  const calories = Math.floor(currentSteps * 0.045);
+function SummaryDetailScreen({ onBack, currentSteps = 0, runStats = { distanceKm: 0, caloriesBurned: 0 } }) {
+  const stepDistance = currentSteps * 0.00044;
+  const runDistance = runStats.distanceKm * 0.621371; // km to miles
+  const distance = (stepDistance + runDistance).toFixed(2);
+
+  const stepCalories = Math.floor(currentSteps * 0.045);
+  const calories = stepCalories + runStats.caloriesBurned;
+
   const floors = Math.floor(currentSteps / 500);
   const progress = Math.min(100, Math.floor((currentSteps / 10000) * 100));
-  const activeTime = Math.floor(currentSteps / 100);
+  const activeTime = Math.floor(currentSteps / 100) + Math.floor(runStats.durationSec / 60);
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
@@ -1861,7 +2551,7 @@ function SummaryDetailScreen({ onBack, currentSteps = 0 }) {
 }
 
 function DeficitDetailScreen({ onBack, currentSteps = 0 }) {
-  const deficit = Math.max(0, 10000 - currentSteps);
+  const calorieDeficit = Math.round(currentSteps * 0.04);
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <View
@@ -1888,7 +2578,7 @@ function DeficitDetailScreen({ onBack, currentSteps = 0 }) {
         </TouchableOpacity>
         <Text
           style={{
-            fontFamily: "Inter_700Bold",
+            fontWeight: "700",
             fontSize: 18,
             color: C.text,
             marginLeft: 16,
@@ -1906,7 +2596,7 @@ function DeficitDetailScreen({ onBack, currentSteps = 0 }) {
             marginBottom: 4,
           }}
         >
-          Steps Behind Goal
+          Active Calorie Deficit
         </Text>
         <Text
           style={{
@@ -1916,7 +2606,7 @@ function DeficitDetailScreen({ onBack, currentSteps = 0 }) {
             letterSpacing: -2,
           }}
         >
-          {deficit.toLocaleString()}
+          {calorieDeficit.toLocaleString()} <Text style={{ fontSize: 24, color: C.muted }}>kcal</Text>
         </Text>
         <Text
           style={{
@@ -1929,8 +2619,7 @@ function DeficitDetailScreen({ onBack, currentSteps = 0 }) {
             lineHeight: 22,
           }}
         >
-          You need {deficit.toLocaleString()} more steps to reach your daily
-          goal of 10,000 steps.
+          You've burned {calorieDeficit.toLocaleString()} extra calories today just by walking! Keep moving to increase your daily deficit.
         </Text>
       </View>
     </View>
@@ -2075,6 +2764,11 @@ function SettingsRow({
 }
 
 function AccountProfileScreen() {
+  const userName = useAppStore((st) => st.userName);
+  const setHasOnboarded = useAppStore((st) => st.setHasOnboarded);
+  const displayName = userName.trim() || "Athlete";
+  const initial = displayName.charAt(0).toUpperCase();
+
   // Functional states for the prototype UI
   const [unit, setUnit] = useState("Metric");
   const [lang, setLang] = useState("English");
@@ -2140,9 +2834,9 @@ function AccountProfileScreen() {
           }}
         >
           <Text
-            style={{ fontFamily: "Inter_700Bold", fontSize: 36, color: "#fff" }}
+            style={            { fontFamily: "Inter_700Bold", fontSize: 36, color: "#fff" }}
           >
-            A
+            {initial}
           </Text>
         </View>
         <Text
@@ -2153,7 +2847,7 @@ function AccountProfileScreen() {
             marginBottom: 4,
           }}
         >
-          Alex
+          {displayName}
         </Text>
         <Text
           style={{
@@ -2267,6 +2961,12 @@ function AccountProfileScreen() {
           label="App Version"
           value="v1.0.0"
           onPress={showVersionInfo}
+        />
+        <SettingsRow
+          icon="log-out-outline"
+          label="Log Out"
+          onPress={() => setHasOnboarded(false)}
+          isDestructive
           hideBorder
         />
       </View>
@@ -2389,20 +3089,71 @@ function SlideInScreen({ visible, children }) {
 // ─── MAIN APP ──────────────────────────────────────────────────────────────
 
 export default function App() {
+  const [fontsLoaded, fontError] = useFonts({
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+    Inter_800ExtraBold,
+  });
+  const hasHydrated = useAppStore((st) => st._hasHydrated);
+  const hasOnboarded = useAppStore((st) => st.hasOnboarded);
+
+  if ((!fontsLoaded && !fontError) || !hasHydrated) {
+    return (
+      <View style={{ flex: 1, backgroundColor: "#000000" }}>
+        <StatusBar style="light" />
+      </View>
+    );
+  }
+
+  if (!hasOnboarded) {
+    return <Onboarding />;
+  }
+
+  return <MainApp />;
+}
+
+function MainApp() {
   const [activeTab, setActiveTab] = useState("Home");
   const [currentScreen, setCurrentScreen] = useState("Main"); // 'Main' | 'SleepDetail'
+  const [isTrackerUIVisible, setIsTrackerUIVisible] = useState(true);
 
   // Real Hardware Pedometer State
   const [isPedometerAvailable, setIsPedometerAvailable] = useState("checking");
-  const [pastStepCount, setPastStepCount] = useState(0);
-  const [currentStepCount, setCurrentStepCount] = useState(0);
+
+  const pastStepCount = useAppStore((s) => s.pastStepCount);
+  const currentStepCount = useAppStore((s) => s.currentStepCount);
+  const setPastStepCount = useAppStore((s) => s.setPastStepCount);
+  const setCurrentStepCount = useAppStore((s) => s.setCurrentStepCount);
 
   // Manual Entry States
-  const [sleepHours, setSleepHours] = useState(0);
-  const [sleepMins, setSleepMins] = useState(0);
-  const [waterGlasses, setWaterGlasses] = useState(0);
-  const [weightKg, setWeightKg] = useState(0);
-  const [heartRate, setHeartRate] = useState(0);
+  const sleepHours = useAppStore((s) => s.sleepHours);
+  const sleepMins = useAppStore((s) => s.sleepMins);
+  const setSleepHours = useAppStore((s) => s.setSleepHours);
+  const setSleepMins = useAppStore((s) => s.setSleepMins);
+
+  const waterGlasses = useAppStore((s) => s.waterGlasses);
+  const setWaterGlasses = useAppStore((s) => s.setWaterGlasses);
+
+  const weightKg = useAppStore((s) => s.weightKg);
+  const setWeightKg = useAppStore((s) => s.setWeightKg);
+
+  const heartRate = useAppStore((s) => s.heartRate);
+  const setHeartRate = useAppStore((s) => s.setHeartRate);
+  const userName = useAppStore((st) => st.userName);
+
+  // Run stats for today (from Program tab), added into Home's totals
+  const runs = useAppStore((s) => s.runs);
+  const todayRunStats = runs
+    .filter((r) => new Date(r.date).toDateString() === new Date().toDateString())
+    .reduce(
+      (acc, r) => ({
+        distanceKm: acc.distanceKm + r.distanceKm,
+        caloriesBurned: acc.caloriesBurned + r.caloriesBurned,
+        durationSec: acc.durationSec + r.durationSec,
+      }),
+      { distanceKm: 0, caloriesBurned: 0, durationSec: 0 }
+    );
 
   useEffect(() => {
     let subscription;
@@ -2454,30 +3205,45 @@ export default function App() {
 
   const totalSteps = pastStepCount + currentStepCount;
 
+  const stepDistanceMi = totalSteps * 0.00044;
+  const stepCalories = Math.floor(totalSteps * 0.045);
+
+  const combinedDistanceMi = stepDistanceMi + todayRunStats.distanceKm * 0.621371;
+  const combinedCalories = stepCalories + todayRunStats.caloriesBurned;
+
   // Animation for TabBar hide on scroll
   const scrollY = useRef(new Animated.Value(0)).current;
+  const mainScrollRef = useRef(null);
+
+  useEffect(() => {
+    scrollY.setValue(0);
+    if (mainScrollRef.current) {
+      mainScrollRef.current.scrollTo({ y: 0, animated: false });
+    }
+  }, [activeTab, scrollY]);
+
   const diffClamp = Animated.diffClamp(scrollY, 0, 120); // 120px to ensure it completely hides below screen
   const translateY = diffClamp.interpolate({
     inputRange: [0, 120],
     outputRange: [0, 120],
   });
 
-  let [fontsLoaded] = useFonts({
-    Inter_500Medium,
-    Inter_600SemiBold,
-    Inter_700Bold,
-    Inter_800ExtraBold,
-  });
+  const firstName = (userName.trim() || "there").split(" ")[0];
+  const nameInitial = firstName.charAt(0).toUpperCase();
 
-  if (!fontsLoaded) {
-    return null;
-  }
+  const hour = new Date().getHours();
+  let greeting = "Morning";
+  if (hour >= 12 && hour < 17) greeting = "Afternoon";
+  else if (hour >= 17) greeting = "Evening";
+
+  const goalPercentage = Math.min(100, Math.round((totalSteps / 10000) * 100));
 
   return (
     <SafeAreaView style={s.safe}>
       <StatusBar style="light" />
       <Animated.ScrollView
-        style={s.scroll}
+        ref={mainScrollRef}
+        style={[s.scroll, activeTab === "Program" && { display: 'none' }]}
         contentContainerStyle={s.content}
         showsVerticalScrollIndicator={false}
         onScroll={Animated.event(
@@ -2506,7 +3272,7 @@ export default function App() {
                           fontFamily: "Inter_500Medium",
                         }}
                       >
-                        Morning{" "}
+                        {greeting}{" "}
                       </Text>
                       <Text
                         style={{
@@ -2514,7 +3280,7 @@ export default function App() {
                           fontFamily: "Inter_800ExtraBold",
                         }}
                       >
-                        Alex!
+                        {firstName}!
                       </Text>
                     </Text>
                     <Text style={s.headerTextLine}>
@@ -2532,7 +3298,7 @@ export default function App() {
                           fontFamily: "Inter_800ExtraBold",
                         }}
                       >
-                        78%
+                        {goalPercentage}%
                       </Text>
                       <Text
                         style={{
@@ -2555,7 +3321,15 @@ export default function App() {
                   </View>
 
                   <View style={s.avatarWrap}>
-                    <Ionicons name="person" size={24} color="#666" />
+                    <Text
+                      style={{
+                        fontFamily: "Inter_700Bold",
+                        fontSize: 18,
+                        color: "#fff",
+                      }}
+                    >
+                      {nameInitial}
+                    </Text>
                   </View>
                 </View>
 
@@ -2615,7 +3389,7 @@ export default function App() {
                           fontSize: 16,
                         }}
                       >
-                        {(totalSteps * 0.00044).toFixed(2)}
+                        {combinedDistanceMi.toFixed(2)}
                         <Text style={{ fontSize: 12 }}> mi</Text>
                       </Text>
                       <Text
@@ -2637,7 +3411,7 @@ export default function App() {
                           fontSize: 16,
                         }}
                       >
-                        {Math.floor(totalSteps * 0.045)}
+                        {combinedCalories}
                         <Text style={{ fontSize: 12 }}> kcal</Text>
                       </Text>
                       <Text
@@ -2732,7 +3506,7 @@ export default function App() {
                         <ArrowRight />
                       </View>
 
-              
+
                       <Text style={s.metricLabel}>Daily Goal</Text>
                       <Text style={[s.metricValue, { color: C.orange }]}>
                         {Math.min(100, Math.floor((totalSteps / 10000) * 100))}%
@@ -2760,7 +3534,7 @@ export default function App() {
                   </TouchableOpacity>
                 </View>
 
-{/* ── ROW 1: SLEEP & WATER ── */}
+                {/* ── ROW 1: SLEEP & WATER ── */}
                 {/* ── ROW 1: WATER & WEIGHT ── */}
                 <View style={s.row}>
                   {/* WATER */}
@@ -2814,62 +3588,7 @@ export default function App() {
             {/* ================================================================= */}
             {/*                          PROGRAM TAB                              */}
             {/* ================================================================= */}
-            {activeTab === "Program" && (
-              <>
-                {/* ── HEADER ── */}
-                <View style={s.header}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.headerTextLine}>
-                      <Text
-                        style={{
-                          color: C.muted,
-                          fontFamily: "Inter_500Medium",
-                        }}
-                      >
-                        Program{" "}
-                      </Text>
-                      <Text
-                        style={{
-                          color: "#fff",
-                          fontFamily: "Inter_800ExtraBold",
-                        }}
-                      >
-                        Overview
-                      </Text>
-                    </Text>
-                    <Text style={s.headerTextLine}>
-                      <Text
-                        style={{
-                          color: C.muted,
-                          fontFamily: "Inter_500Medium",
-                        }}
-                      >
-                        Track your{" "}
-                      </Text>
-                      <Text
-                        style={{
-                          color: "#fff",
-                          fontFamily: "Inter_800ExtraBold",
-                        }}
-                      >
-                        progress
-                      </Text>
-                    </Text>
-                  </View>
-
-                  <View style={s.avatarWrap}>
-                    <Ionicons name="person" size={24} color="#666" />
-                  </View>
-                </View>
-
-                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', marginTop: 100 }}>
-                  <Ionicons name="construct-outline" size={48} color={C.muted} />
-                  <Text style={{ color: C.muted, fontFamily: 'Inter_500Medium', marginTop: 16 }}>
-                    Ready for a new feature...
-                  </Text>
-                </View>
-              </>
-            )}
+            {/* RunningTracker has been moved outside of ScrollView for full-screen layout */}
 
             {/* ================================================================= */}
             {/*                          ACCOUNT TAB                              */}
@@ -2882,8 +3601,19 @@ export default function App() {
         )}
       </Animated.ScrollView>
 
-      {/* Only show TabBar if we are on the Main screen */}
-      {currentScreen === "Main" && (
+      {/* Render RunningTracker outside ScrollView to bypass content padding */}
+      {currentScreen === "Main" && activeTab === "Program" && (
+        <View style={StyleSheet.absoluteFillObject}>
+          <RunningTracker
+            onClose={() => setActiveTab("Home")}
+            onUIToggle={setIsTrackerUIVisible}
+            scrollY={scrollY}
+          />
+        </View>
+      )}
+
+      {/* Show TabBar unless we are in the Tracker's immersive (hidden UI) mode */}
+      {currentScreen === "Main" && !(activeTab === "Program" && !isTrackerUIVisible) && (
         <TabBar
           activeTab={activeTab}
           setActiveTab={setActiveTab}
@@ -2903,28 +3633,28 @@ export default function App() {
       </SlideInScreen>
 
       <SlideInScreen visible={currentScreen === "SleepDetail"}>
-        <SleepDetailScreen 
-          onBack={() => setCurrentScreen("Main")} 
-          sleepHours={sleepHours} 
-          sleepMins={sleepMins} 
-          setSleepHours={setSleepHours} 
-          setSleepMins={setSleepMins} 
+        <SleepDetailScreen
+          onBack={() => setCurrentScreen("Main")}
+          sleepHours={sleepHours}
+          sleepMins={sleepMins}
+          setSleepHours={setSleepHours}
+          setSleepMins={setSleepMins}
         />
       </SlideInScreen>
 
       <SlideInScreen visible={currentScreen === "WaterDetail"}>
-        <WaterDetailScreen 
-          onBack={() => setCurrentScreen("Main")} 
-          waterGlasses={waterGlasses} 
-          setWaterGlasses={setWaterGlasses} 
+        <WaterDetailScreen
+          onBack={() => setCurrentScreen("Main")}
+          waterGlasses={waterGlasses}
+          setWaterGlasses={setWaterGlasses}
         />
       </SlideInScreen>
 
       <SlideInScreen visible={currentScreen === "WeightDetail"}>
-        <WeightDetailScreen 
-          onBack={() => setCurrentScreen("Main")} 
-          weightKg={weightKg} 
-          setWeightKg={setWeightKg} 
+        <WeightDetailScreen
+          onBack={() => setCurrentScreen("Main")}
+          weightKg={weightKg}
+          setWeightKg={setWeightKg}
         />
       </SlideInScreen>
 
@@ -3135,6 +3865,8 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 12,
+    zIndex: 999,
+    elevation: 10,
   },
   tabActiveOuter: {
     borderRadius: 32,
@@ -3179,3 +3911,4 @@ const s = StyleSheet.create({
   },
   settingText: { fontFamily: "Inter_600SemiBold", fontSize: 14, color: C.text },
 });
+
