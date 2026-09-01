@@ -9,9 +9,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
+  StatusBar as RNStatusBar,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
@@ -393,7 +393,11 @@ export default function Onboarding() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
+  safe: {
+    flex: 1,
+    backgroundColor: C.bg,
+    paddingTop: Platform.OS === "android" ? 12 : 0,
+  },
   flex: { flex: 1 },
   topBar: {
     flexDirection: "row",

@@ -1,5 +1,6 @@
 import { StatusBar } from "expo-status-bar";
 import { BlurView } from "expo-blur";
+import { LinearGradient as ExpoLinearGradient } from "expo-linear-gradient";
 import { Pedometer } from "expo-sensors";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useState, useRef, useEffect } from "react";
@@ -21,11 +22,14 @@ import {
   Text,
   TouchableOpacity,
   View,
-  Image,
-  Switch,
   TextInput,
   Modal,
   PanResponder,
+  Platform,
+  StatusBar as RNStatusBar,
+  BackHandler,
+  FlatList,
+  Alert,
 } from "react-native";
 
 import Svg, {
@@ -51,7 +55,7 @@ const { width: W } = Dimensions.get("window");
 const C = {
   bg: "#000000",
   card: "rgba(255, 255, 255, 0.05)", // Glassy translucent
-  cardBorder: "rgba(255, 255, 255, 0.12)", // Thin crisp glass edge
+  cardBorder: "rgba(255, 255, 255, 0.5)", // Prominent white border
   text: "#ffffff",
   muted: "#808084",
   lime: "#b8ff1f",
@@ -1385,10 +1389,11 @@ function projectCoordinates(coords, width, height, padding = 40) {
   };
 }
 
-function RunningTracker({ onClose, onUIToggle, scrollY }) {
+function RunningTracker({ onClose, onUIToggle, scrollY, viewingRun, setViewingRun }) {
   const startRun = useAppStore((s) => s.startRun);
   const endRun = useAppStore((s) => s.endRun);
   const runs = useAppStore((s) => s.runs);
+  const deleteRun = useAppStore((s) => s.deleteRun);
 
   const [hasPermission, setHasPermission] = useState(null);
   const [isTracking, setIsTracking] = useState(false);
@@ -1483,22 +1488,38 @@ function RunningTracker({ onClose, onUIToggle, scrollY }) {
   }, [isUIVisible]);
 
   useEffect(() => {
-    if (webViewRef.current && routeCoordinates.length > 0) {
-      const latLngs = routeCoordinates.map(c => [c.latitude, c.longitude]);
+    const route = viewingRun ? viewingRun.route : routeCoordinates;
+    if (webViewRef.current && route && route.length > 0) {
+      const latLngs = route.map(c => [c.latitude, c.longitude]);
       webViewRef.current.injectJavaScript(`
         if (typeof polyline !== 'undefined' && typeof circle !== 'undefined' && typeof map !== 'undefined') {
           var coords = ${JSON.stringify(latLngs)};
           polyline.setLatLngs(coords);
           var lastCoord = coords[coords.length - 1];
           circle.setLatLng(lastCoord);
-          map.panTo(lastCoord);
+          if (${!!viewingRun}) {
+            map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+          } else {
+            map.panTo(lastCoord);
+          }
         }
         true;
       `);
     }
-  }, [routeCoordinates]);
+  }, [routeCoordinates, viewingRun]);
 
   useEffect(() => {
+    if (viewingRun && viewingRun.route && viewingRun.route.length > 0) {
+      setHasPermission(true);
+      setCurrentRegion({
+        latitude: viewingRun.route[0].latitude,
+        longitude: viewingRun.route[0].longitude,
+        latitudeDelta: 0.005,
+        longitudeDelta: 0.005,
+      });
+      return;
+    }
+
     (async () => {
       let { status } = await Location.requestForegroundPermissionsAsync();
       setHasPermission(status === 'granted');
@@ -1579,10 +1600,11 @@ function RunningTracker({ onClose, onUIToggle, scrollY }) {
     return `${m}:${s}`;
   };
 
-  const distanceKm = distance / 1000;
+  const distanceKm = viewingRun ? viewingRun.distanceKm : (distance / 1000);
+  const durSecs = viewingRun ? viewingRun.durationSec : duration;
   let paceStr = "--:--";
   if (distanceKm > 0) {
-    const paceSecs = duration / distanceKm;
+    const paceSecs = durSecs / distanceKm;
     paceStr = formatTime(Math.round(paceSecs));
   }
 
@@ -1730,20 +1752,22 @@ function RunningTracker({ onClose, onUIToggle, scrollY }) {
                 style={{ marginRight: 10 }}
               />
               <Text style={{ color: '#fff', fontSize: 24, fontFamily: 'Inter_600SemiBold' }}>
-                {isTracking ? "Active Run" : "Ready to Run"}
+                {viewingRun ? "Viewing Run" : (isTracking ? "Active Run" : "Ready to Run")}
               </Text>
             </View>
 
-            <TouchableOpacity
-              onPress={isTracking ? stopTracking : startTracking}
-              style={{
-                width: 52, height: 52, borderRadius: 26,
-                backgroundColor: isTracking ? '#ff3b30' : C.cyan,
-                justifyContent: 'center', alignItems: 'center',
-              }}
-            >
-              <Ionicons name={isTracking ? "square" : "play"} size={26} color={isTracking ? "#fff" : "#000"} style={isTracking ? {} : { marginLeft: 3 }} />
-            </TouchableOpacity>
+            {!viewingRun && (
+              <TouchableOpacity
+                onPress={isTracking ? stopTracking : startTracking}
+                style={{
+                  width: 52, height: 52, borderRadius: 26,
+                  backgroundColor: isTracking ? '#ff3b30' : C.cyan,
+                  justifyContent: 'center', alignItems: 'center',
+                }}
+              >
+                <Ionicons name={isTracking ? "square" : "play"} size={26} color={isTracking ? "#fff" : "#000"} style={isTracking ? {} : { marginLeft: 3 }} />
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Main Metrics Row */}
@@ -1756,7 +1780,7 @@ function RunningTracker({ onClose, onUIToggle, scrollY }) {
             </View>
             <View>
               <Text style={{ fontFamily: 'monospace', color: '#fff', fontSize: 28, fontWeight: '800' }}>
-                {formatTime(duration)}
+                {formatTime(durSecs)}
               </Text>
               <Text style={{ fontFamily: 'Inter_500Medium', color: '#888', fontSize: 11, marginTop: 4, letterSpacing: 1.2 }}>TIME</Text>
             </View>
@@ -1790,8 +1814,8 @@ function RunningTracker({ onClose, onUIToggle, scrollY }) {
           {/* Past Runs History */}
           <View style={{ flex: 1, marginTop: 32 }}>
             <Text style={{ fontFamily: 'Inter_700Bold', color: '#666', fontSize: 12, letterSpacing: 1, marginBottom: 16 }}>PAST RUNS</Text>
-            <Animated.ScrollView 
-              showsVerticalScrollIndicator={false} 
+            <Animated.ScrollView
+              showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 40 }}
               onScroll={scrollY ? Animated.event(
                 [{ nativeEvent: { contentOffset: { y: scrollY } } }],
@@ -1813,7 +1837,10 @@ function RunningTracker({ onClose, onUIToggle, scrollY }) {
                   const durStr = formatTime(typeof run.durationSec === 'number' ? run.durationSec : 0);
 
                   return (
-                    <View key={run.id || idx} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', padding: 16, borderRadius: 16, marginBottom: 12 }}>
+                    <TouchableOpacity 
+                      key={run.id || idx} 
+                      onPress={() => setViewingRun(run)}
+                      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', padding: 16, borderRadius: 16, marginBottom: 12 }}>
                       <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(60, 168, 255, 0.1)', justifyContent: 'center', alignItems: 'center', marginRight: 16 }}>
                         <Ionicons name="walk" size={20} color={C.cyan} />
                       </View>
@@ -1823,10 +1850,18 @@ function RunningTracker({ onClose, onUIToggle, scrollY }) {
                           {dateStr} - {durStr}
                         </Text>
                       </View>
-                      <View style={{ alignItems: 'flex-end' }}>
+                      <View style={{ alignItems: 'flex-end', marginRight: 12 }}>
                         <Text style={{ color: '#fff', fontFamily: 'Inter_600SemiBold', fontSize: 14 }}>{cals} kcal</Text>
                       </View>
-                    </View>
+                      <TouchableOpacity onPress={() => {
+                        deleteRun(run.id);
+                        if (viewingRun && viewingRun.id === run.id) {
+                          setViewingRun(null);
+                        }
+                      }} style={{ padding: 8 }}>
+                        <Ionicons name="trash-outline" size={20} color="#ff3b30" />
+                      </TouchableOpacity>
+                    </TouchableOpacity>
                   );
                 })
               )}
@@ -2707,277 +2742,311 @@ function TrendDetailScreen({ onBack, currentSteps = 0 }) {
   );
 }
 
-function SettingsRow({
-  icon,
-  label,
-  value,
-  onPress,
-  isDestructive,
-  hideBorder,
-}) {
+function AppleWalletRow({ icon, label, value, onPress, isDestructive, hideBorder, color }) {
   return (
     <TouchableOpacity
-      activeOpacity={0.7}
       onPress={onPress}
+      activeOpacity={0.7}
       style={{
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
-        paddingVertical: 18,
+        paddingVertical: 14,
         paddingHorizontal: 20,
-        borderBottomWidth: hideBorder ? 0 : 1,
-        borderBottomColor: C.cardBorder,
+        backgroundColor: '#000000', // Deep black
+        borderBottomWidth: hideBorder ? 0 : StyleSheet.hairlineWidth,
+        borderBottomColor: 'rgba(255, 255, 255, 0.05)',
       }}
     >
       <View style={{ flexDirection: "row", alignItems: "center" }}>
-        <Ionicons
-          name={icon}
-          size={20}
-          color={isDestructive ? "#ff3b30" : "#fff"}
-          style={{ marginRight: 14 }}
-        />
-        <Text
-          style={{
-            fontFamily: "Inter_600SemiBold",
-            fontSize: 15,
-            color: isDestructive ? "#ff3b30" : "#fff",
-          }}
-        >
-          {label}
-        </Text>
-      </View>
-
-      <View style={{ flexDirection: "row", alignItems: "center" }}>
-        {value ? (
-          <Text
-            style={{
-              fontFamily: "Inter_500Medium",
-              fontSize: 14,
-              color: C.muted,
-            }}
-          >
-            {value}
+        <View style={{
+          width: 38, height: 38, borderRadius: 10,
+          backgroundColor: isDestructive ? 'rgba(255, 59, 48, 0.15)' : (color || '#007aff'),
+          alignItems: 'center', justifyContent: 'center', marginRight: 16
+        }}>
+          <Ionicons name={icon} size={22} color={isDestructive ? "#ff3b30" : "#fff"} />
+        </View>
+        <View>
+          <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 16, color: isDestructive ? "#ff3b30" : "#fff", marginBottom: value ? 2 : 0 }}>
+            {label}
           </Text>
-        ) : (
-          !isDestructive && (
-            <Ionicons name="chevron-forward" size={18} color={C.muted} />
-          )
-        )}
+          {value && <Text style={{ fontFamily: "Inter_500Medium", fontSize: 13, color: "#8E8E93" }}>{value}</Text>}
+        </View>
       </View>
+      {!isDestructive && <Ionicons name="chevron-forward" size={18} color="#48484a" />}
     </TouchableOpacity>
   );
 }
 
-function AccountProfileScreen() {
+function AccountProfileScreen({ setCurrentScreen }) {
   const userName = useAppStore((st) => st.userName);
   const setHasOnboarded = useAppStore((st) => st.setHasOnboarded);
   const setIsSignedIn = useAppStore((st) => st.setIsSignedIn);
+  const isDarkMode = useAppStore((st) => st.isDarkMode);
+  const setIsDarkMode = useAppStore((st) => st.setIsDarkMode);
   const dailyStepGoal = useAppStore((s) => s.dailyStepGoal) || 10000;
   const setDailyStepGoal = useAppStore((s) => s.setDailyStepGoal);
   const displayName = userName.trim() || "Athlete";
-  const initial = displayName.charAt(0).toUpperCase();
 
-  // Functional states for the prototype UI
   const [unit, setUnit] = useState("Metric");
   const [lang, setLang] = useState("English");
   const [cals, setCals] = useState("2,400 kcal");
   const [water, setWater] = useState("2.5 L");
+  
+  const [activeDial, setActiveDial] = useState(null);
 
-  // Handlers to make buttons feel alive
-  const toggleUnit = () =>
-    setUnit((prev) => (prev === "Metric" ? "Imperial" : "Metric"));
-
-  const toggleLang = () => {
-    if (lang === "English") setLang("Español");
-    else if (lang === "Español") setLang("Français");
-    else setLang("English");
+  // Dial Configurations
+  const getDialConfig = () => {
+    switch (activeDial) {
+      case 'goal': {
+        const ACTUAL = Array.from({length: 26}, (_, i) => 5000 + (i * 1000));
+        return { title: "Adjust Daily Goal", subtitle: "Scroll the dial to set your target", data: ACTUAL, options: [null, ...ACTUAL, null], value: dailyStepGoal, onChange: setDailyStepGoal };
+      }
+      case 'unit': {
+        const ACTUAL = ["Metric", "Imperial"];
+        return { title: "Measurement Units", subtitle: "Select your preferred unit system", data: ACTUAL, options: [null, ...ACTUAL, null], value: unit, onChange: setUnit };
+      }
+      case 'lang': {
+        const ACTUAL = ["English", "Español", "Français"];
+        return { title: "App Language", subtitle: "Select your preferred language", data: ACTUAL, options: [null, ...ACTUAL, null], value: lang, onChange: setLang };
+      }
+      case 'cals': {
+        const ACTUAL = Array.from({length: 21}, (_, i) => `${(1500 + (i * 100)).toLocaleString()} kcal`);
+        return { title: "Daily Calories", subtitle: "Set your daily calorie target", data: ACTUAL, options: [null, ...ACTUAL, null], value: cals, onChange: setCals };
+      }
+      case 'water': {
+        const ACTUAL = Array.from({length: 11}, (_, i) => `${(1.0 + (i * 0.5)).toFixed(1)} L`);
+        return { title: "Daily Water", subtitle: "Set your daily hydration goal", data: ACTUAL, options: [null, ...ACTUAL, null], value: water, onChange: setWater };
+      }
+      default: return null;
+    }
   };
+  const dialConfig = getDialConfig();
+  const ITEM_HEIGHT = 60;
 
-  const cycleSteps = () => {
-    if (dailyStepGoal === 10000) setDailyStepGoal(12000);
-    else if (dailyStepGoal === 12000) setDailyStepGoal(15000);
-    else setDailyStepGoal(10000);
-  };
-
-  const cycleCals = () => {
-    if (cals === "2,400 kcal") setCals("2,600 kcal");
-    else if (cals === "2,600 kcal") setCals("3,000 kcal");
-    else setCals("2,400 kcal");
-  };
-
-  const cycleWater = () => {
-    if (water === "2.5 L") setWater("3.0 L");
-    else if (water === "3.0 L") setWater("4.0 L");
-    else setWater("2.5 L");
-  };
-
+  // Handlers
+  
   const showLegalAlert = (title) => {
-    Alert.alert(
-      title,
-      "This is a functional prototype. The full terms and privacy policy will be available in the production release.",
-      [{ text: "Understood", style: "default" }],
-    );
+    Alert.alert(title, "This is a functional prototype. The full terms and privacy policy will be available in the production release.", [{ text: "Understood", style: "default" }]);
   };
-
   const showVersionInfo = () => {
-    Alert.alert(
-      "App Version",
-      "You are running the latest version: v1.0.0 (Build 42)",
-    );
+    Alert.alert("App Version", "You are running the latest version: v1.0.0 (Build 42)");
   };
 
   return (
-    <>
-      <View style={{ alignItems: "center", paddingVertical: 32 }}>
-        <View
+    <View style={{ 
+      backgroundColor: '#000000', // Dark mode background 
+      marginHorizontal: -16, 
+      marginTop: -10, 
+      paddingTop: 10,
+      paddingHorizontal: 20,
+      paddingBottom: 80,
+      minHeight: Dimensions.get('window').height
+    }}>
+      
+      {/* ── HERO PROFILE (APPLE CARD STYLE) ── */}
+      <View style={{ alignItems: 'center', marginTop: 16, marginBottom: 32 }}>
+        <ExpoLinearGradient
+          colors={['#9c89ff', '#f089e6', '#ffb95e']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
           style={{
-            width: 88,
-            height: 88,
-            borderRadius: 44,
-            backgroundColor: C.cardBorder,
-            alignItems: "center",
-            justifyContent: "center",
-            marginBottom: 16,
+            width: '100%',
+            height: 220,
+            borderRadius: 16,
+            padding: 24,
+            justifyContent: 'space-between',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.1,
+            shadowRadius: 10,
+            elevation: 5
           }}
         >
-          <Text
-            style={            { fontFamily: "Inter_700Bold", fontSize: 36, color: "#fff" }}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Ionicons name="planet" size={32} color="rgba(255,255,255,0.4)" />
+          </View>
+          
+          <View>
+            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 18, color: '#333', marginBottom: 4 }}>
+              {displayName}
+            </Text>
+            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: 'rgba(0,0,0,0.4)' }}>
+              Ozzz Pro Member
+            </Text>
+          </View>
+          
+          <View style={{ position: 'absolute', bottom: 24, right: 24 }}>
+            <Ionicons name="aperture" size={36} color="rgba(0,0,0,0.15)" />
+          </View>
+        </ExpoLinearGradient>
+      </View>
+
+      {/* ── STATS CARDS (VERTICAL STACK) ── */}
+      <View style={{ marginBottom: 32 }}>
+        
+        {/* Card Balance / Total Steps */}
+        <TouchableOpacity 
+          onPress={() => setCurrentScreen("ActivityDetail")} 
+          activeOpacity={0.7} 
+          style={{ backgroundColor: '#000000', borderRadius: 20, padding: 20, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+        >
+          <View>
+            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#ffffff', marginBottom: 8 }}>Total Steps Balance</Text>
+            <Text adjustsFontSizeToFit numberOfLines={1} style={{ fontFamily: 'Inter_800ExtraBold', fontSize: 36, color: '#ffffff', letterSpacing: -1 }}>
+              {dailyStepGoal.toLocaleString()}
+            </Text>
+          </View>
+          <View style={{ backgroundColor: '#2C2C2E', borderRadius: 20, paddingVertical: 8, paddingHorizontal: 16 }}>
+            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: '#ffffff' }}>View</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Yearly Activity (Mock Bar Chart) */}
+        <TouchableOpacity 
+          onPress={() => Alert.alert("Weekly Activity", "The actual weekly activity charts page is still being designed!")} 
+          activeOpacity={0.7} 
+          style={{ backgroundColor: '#000000', borderRadius: 20, padding: 20, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)' }}
+        >
+          <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#ffffff', marginBottom: 4 }}>Weekly Activity</Text>
+          <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: '#8e8e93', marginBottom: 20 }}>This Week</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', height: 60, paddingHorizontal: 10 }}>
+            {[0.3, 0.6, 0.4, 0.9, 0.7, 0.5, 0.8].map((val, i) => (
+              <View key={i} style={{ width: 14, height: val * 60, backgroundColor: i === 1 ? '#9c89ff' : '#2C2C2E', borderRadius: 7 }} />
+            ))}
+          </View>
+        </TouchableOpacity>
+
+        {/* Daily Goal */}
+        <View style={{ backgroundColor: '#000000', borderRadius: 20, padding: 20, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View>
+            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#ffffff', marginBottom: 8 }}>Daily Goal</Text>
+            <Text adjustsFontSizeToFit numberOfLines={1} style={{ fontFamily: 'Inter_800ExtraBold', fontSize: 36, color: '#ffffff', letterSpacing: -1 }}>
+              {dailyStepGoal >= 1000 ? `${dailyStepGoal / 1000}k` : dailyStepGoal}
+            </Text>
+          </View>
+          <TouchableOpacity 
+            onPress={() => setActiveDial('goal')} 
+            style={{ backgroundColor: '#2C2C2E', borderRadius: 24, paddingVertical: 14, paddingHorizontal: 24, alignItems: 'center' }}
           >
-            {initial}
-          </Text>
+            <Text adjustsFontSizeToFit numberOfLines={1} style={{ fontFamily: 'Inter_600SemiBold', fontSize: 15, color: '#ffffff' }}>Change Goal</Text>
+          </TouchableOpacity>
         </View>
-        <Text
-          style={{
-            fontFamily: "Inter_700Bold",
-            fontSize: 24,
-            color: "#fff",
-            marginBottom: 4,
+
+      </View>
+
+      {/* ── PREFERENCES & SETTINGS ── */}
+      <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 18, color: '#ffffff', marginBottom: 16, marginLeft: 8 }}>Preferences & Settings</Text>
+      
+      <View style={{ borderRadius: 16, overflow: 'hidden', backgroundColor: '#000000', marginBottom: 40, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)' }}>
+        <AppleWalletRow icon="calculator-outline" color="#007aff" label="Units" value={unit} onPress={() => setActiveDial('unit')} />
+        <AppleWalletRow icon="language-outline" color="#34c759" label="Language" value={lang} onPress={() => setActiveDial('lang')} />
+        <AppleWalletRow icon="flame-outline" color="#ff3b30" label="Daily Calories" value={cals} onPress={() => setActiveDial('cals')} />
+        <AppleWalletRow icon="water-outline" color="#32ade6" label="Daily Water" value={water} onPress={() => setActiveDial('water')} />
+        <AppleWalletRow icon="document-text-outline" color="#5856d6" label="Terms of Service" onPress={() => showLegalAlert("Terms")} />
+        <AppleWalletRow icon="shield-checkmark-outline" color="#ff9500" label="Privacy Policy" onPress={() => showLegalAlert("Privacy")} />
+        <AppleWalletRow icon="information-circle-outline" color="#8e8e93" label="App Version" value="v1.0.0" onPress={showVersionInfo} />
+        <AppleWalletRow
+          icon={isDarkMode ? "moon-outline" : "sunny-outline"}
+          color="#ffcc00"
+          label="Appearance"
+          value={isDarkMode ? "Dark" : "Light"}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setIsDarkMode(!isDarkMode);
           }}
-        >
-          {displayName}
-        </Text>
-        <Text
-          style={{
-            fontFamily: "Inter_600SemiBold",
-            fontSize: 13,
-            color: C.lime,
-          }}
-        >
-          Ozzz Free Plan
-        </Text>
+        />
+        <AppleWalletRow icon="log-out-outline" label="Log Out" onPress={() => setIsSignedIn(false)} isDestructive hideBorder />
       </View>
+      
+      {/* ── UNIFIED DIAL MODAL ── */}
+      <Modal visible={activeDial !== null} transparent animationType="slide">
+        {dialConfig && (
+          <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }}>
+            <View style={{ backgroundColor: '#1c1c1e', padding: 32, borderTopLeftRadius: 40, borderTopRightRadius: 40 }}>
+              
+              <View style={{ alignItems: 'center', marginBottom: 32 }}>
+                <View style={{ width: 40, height: 5, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 3, marginBottom: 24 }} />
+                <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 24, color: '#ffffff' }}>{dialConfig.title}</Text>
+                <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 14, color: '#8e8e93', marginTop: 8 }}>{dialConfig.subtitle}</Text>
+              </View>
 
-      {/* ── GOALS ── */}
-      <Text
-        style={{
-          fontFamily: "Inter_700Bold",
-          fontSize: 12,
-          color: C.muted,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
-          marginLeft: 20,
-          marginBottom: 8,
-          marginTop: 8,
-        }}
-      >
-        Goals
-      </Text>
-      <View style={[s.card, { padding: 0, overflow: "hidden" }]}>
-        <SettingsRow
-          icon="walk-outline"
-          label="Daily Steps"
-          value={dailyStepGoal.toLocaleString()}
-          onPress={cycleSteps}
-        />
-        <SettingsRow
-          icon="flame-outline"
-          label="Calories"
-          value={cals}
-          onPress={cycleCals}
-        />
-        <SettingsRow
-          icon="water-outline"
-          label="Water Intake"
-          value={water}
-          onPress={cycleWater}
-          hideBorder
-        />
-      </View>
+              {/* WHEEL DIAL */}
+              <View style={{ height: ITEM_HEIGHT * 3, overflow: 'hidden', justifyContent: 'center', marginBottom: 40 }}>
+                <FlatList
+                  key={activeDial} // Remounts list when dial type changes to reset scroll
+                  data={dialConfig.options}
+                  keyExtractor={(item, index) => index.toString()}
+                  showsVerticalScrollIndicator={false}
+                  snapToInterval={ITEM_HEIGHT}
+                  decelerationRate="fast"
+                  scrollEventThrottle={16}
+                  getItemLayout={(data, index) => ({ length: ITEM_HEIGHT, offset: ITEM_HEIGHT * index, index })}
+                  initialScrollIndex={Math.max(0, dialConfig.data.indexOf(dialConfig.value))}
+                  onScroll={(e) => {
+                    const y = e.nativeEvent.contentOffset.y;
+                    const index = Math.round(y / ITEM_HEIGHT);
+                    if (index >= 0 && index < dialConfig.data.length) {
+                      const selectedVal = dialConfig.data[index];
+                      if (selectedVal && selectedVal !== dialConfig.value) {
+                        dialConfig.onChange(selectedVal);
+                        Haptics.selectionAsync();
+                      }
+                    }
+                  }}
+                  renderItem={({ item }) => {
+                    if (item === null) return <View style={{ height: ITEM_HEIGHT }} />;
+                    const isSelected = item === dialConfig.value;
+                    return (
+                      <View style={{ height: ITEM_HEIGHT, justifyContent: 'center', alignItems: 'center' }}>
+                        <Text adjustsFontSizeToFit numberOfLines={1} style={{ 
+                          fontFamily: 'Inter_600SemiBold', 
+                          fontSize: isSelected ? 32 : 22, 
+                          color: isSelected ? '#ffffff' : '#8e8e93',
+                          opacity: isSelected ? 1 : 0.4,
+                          includeFontPadding: false,
+                          textAlignVertical: 'center',
+                          paddingHorizontal: 16
+                        }}>
+                          {item.toLocaleString()}
+                        </Text>
+                      </View>
+                    );
+                  }}
+                />
+                {/* Center Highlight Overlay */}
+                <View 
+                  style={{ 
+                    position: 'absolute', top: ITEM_HEIGHT, width: '100%', height: ITEM_HEIGHT, 
+                    borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#333', zIndex: -1 
+                  }} 
+                  pointerEvents="none" 
+                />
+              </View>
 
-      {/* ── PREFERENCES ── */}
-      <Text
-        style={{
-          fontFamily: "Inter_700Bold",
-          fontSize: 12,
-          color: C.muted,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
-          marginLeft: 20,
-          marginBottom: 8,
-          marginTop: 24,
-        }}
-      >
-        Preferences
-      </Text>
-      <View style={[s.card, { padding: 0, overflow: "hidden" }]}>
-        <SettingsRow
-          icon="scale-outline"
-          label="Units"
-          value={unit}
-          onPress={toggleUnit}
-        />
-        <SettingsRow
-          icon="language-outline"
-          label="Language"
-          value={lang}
-          onPress={toggleLang}
-          hideBorder
-        />
-      </View>
+              <TouchableOpacity 
+                onPress={() => {
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                  setActiveDial(null);
+                }} 
+                style={{ backgroundColor: '#ffffff', paddingVertical: 18, borderRadius: 30, alignItems: 'center' }}
+              >
+                <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 18, color: '#000000' }}>Done</Text>
+              </TouchableOpacity>
 
-      {/* ── ABOUT & LEGAL ── */}
-      <Text
-        style={{
-          fontFamily: "Inter_700Bold",
-          fontSize: 12,
-          color: C.muted,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
-          marginLeft: 20,
-          marginBottom: 8,
-          marginTop: 24,
-        }}
-      >
-        About
-      </Text>
-      <View
-        style={[s.card, { padding: 0, overflow: "hidden", marginBottom: 80 }]}
-      >
-        <SettingsRow
-          icon="document-text-outline"
-          label="Terms of Service"
-          onPress={() => showLegalAlert("Terms of Service")}
-        />
-        <SettingsRow
-          icon="shield-checkmark-outline"
-          label="Privacy Policy"
-          onPress={() => showLegalAlert("Privacy Policy")}
-        />
-        <SettingsRow
-          icon="information-circle-outline"
-          label="App Version"
-          value="v1.0.0"
-          onPress={showVersionInfo}
-        />
-        <SettingsRow
-          icon="log-out-outline"
-          label="Log Out"
-          onPress={() => setIsSignedIn(false)}
-          isDestructive
-          hideBorder
-        />
-      </View>
-    </>
+              <TouchableOpacity 
+                onPress={() => setActiveDial(null)} 
+                style={{ paddingVertical: 18, alignItems: 'center', marginTop: 8 }}
+              >
+                <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 16, color: '#8e8e93' }}>Close</Text>
+              </TouchableOpacity>
+
+            </View>
+          </View>
+        )}
+      </Modal>
+
+    </View>
   );
 }
 
@@ -3129,9 +3198,32 @@ function MainApp() {
   const [activeTab, setActiveTab] = useState("Home");
   const [currentScreen, setCurrentScreen] = useState("Main"); // 'Main' | 'SleepDetail'
   const [isTrackerUIVisible, setIsTrackerUIVisible] = useState(true);
+  const [viewingRun, setViewingRun] = useState(null);
 
   // Real Hardware Pedometer State
   const [isPedometerAvailable, setIsPedometerAvailable] = useState("checking");
+
+  // Hardware Back Button Handler
+  useEffect(() => {
+    const backAction = () => {
+      if (currentScreen !== "Main") {
+        setCurrentScreen("Main");
+        return true; // Prevent default behavior (exit)
+      }
+      if (activeTab !== "Home") {
+        setActiveTab("Home");
+        return true; // Prevent default behavior (exit)
+      }
+      return false; // Let default behavior happen (exit app)
+    };
+
+    const backHandler = BackHandler.addEventListener(
+      "hardwareBackPress",
+      backAction
+    );
+
+    return () => backHandler.remove();
+  }, [currentScreen, activeTab]);
 
   const pastStepCount = useAppStore((s) => s.pastStepCount);
   const currentStepCount = useAppStore((s) => s.currentStepCount);
@@ -3606,7 +3698,7 @@ function MainApp() {
             {/* ================================================================= */}
             {/*                          ACCOUNT TAB                              */}
             {/* ================================================================= */}
-            {activeTab === "Account" && <AccountProfileScreen />}
+            {activeTab === "Account" && <AccountProfileScreen setCurrentScreen={setCurrentScreen} />}
 
             {/* Spacer for floating tab bar */}
             <View style={{ height: 130 }} />
@@ -3618,7 +3710,12 @@ function MainApp() {
       {currentScreen === "Main" && activeTab === "Program" && (
         <View style={StyleSheet.absoluteFillObject}>
           <RunningTracker
-            onClose={() => setActiveTab("Home")}
+            viewingRun={viewingRun}
+            setViewingRun={setViewingRun}
+            onClose={() => {
+              setActiveTab("Home");
+              setViewingRun(null);
+            }}
             onUIToggle={setIsTrackerUIVisible}
             scrollY={scrollY}
           />
@@ -3702,7 +3799,11 @@ function MainApp() {
 // ─── STYLES ────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
+  safe: {
+    flex: 1,
+    backgroundColor: C.bg,
+    paddingTop: Platform.OS === "android" ? 12 : 0,
+  },
   scroll: { flex: 1 },
   content: { padding: 16, paddingTop: 10 },
 

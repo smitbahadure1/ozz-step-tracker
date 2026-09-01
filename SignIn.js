@@ -8,9 +8,9 @@ import {
   Platform,
   StyleSheet,
   Dimensions,
-  SafeAreaView,
   TouchableWithoutFeedback,
   Keyboard,
+  StatusBar as RNStatusBar,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import * as Haptics from "expo-haptics";
@@ -136,6 +136,7 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: C.bg,
+    paddingTop: Platform.OS === "android" ? 12 : 0,
   },
   container: {
     flex: 1,

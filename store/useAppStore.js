@@ -8,11 +8,13 @@ export const useAppStore = create(
       _hasHydrated: false,
       setHasHydrated: (val) => set({ _hasHydrated: val }),
 
-      // ── ONBOARDING & AUTH ───────────────────────────────────────────────
+      // ── ONBOARDING & AUTH & THEME ───────────────────────────────────────
       hasOnboarded: false,
       setHasOnboarded: (val) => set({ hasOnboarded: val }),
       isSignedIn: false,
       setIsSignedIn: (val) => set({ isSignedIn: val }),
+      isDarkMode: true,
+      setIsDarkMode: (val) => set({ isDarkMode: val }),
       userName: "",
       setUserName: (name) => set({ userName: name }),
       userGoal: "", // "lose_weight" or "daily_activity"
@@ -75,6 +77,11 @@ export const useAppStore = create(
           };
         }),
 
+      deleteRun: (id) =>
+        set((state) => ({
+          runs: state.runs.filter((r) => r.id !== id),
+        })),
+
       // ── DERIVED SELECTORS ──────────────────────────────────────────────
       getTodayRuns: () => {
         const today = new Date().toDateString();
@@ -101,10 +108,12 @@ export const useAppStore = create(
       partialize: (state) => ({
         hasOnboarded: state.hasOnboarded,
         isSignedIn: state.isSignedIn,
+        isDarkMode: state.isDarkMode,
         userName: state.userName,
         userGoal: state.userGoal,
         userFitnessLevel: state.userFitnessLevel,
         dailyStepGoal: state.dailyStepGoal,
+        runs: state.runs,
       }),
       onRehydrateStorage: () => () => {
         useAppStore.setState({ _hasHydrated: true });
