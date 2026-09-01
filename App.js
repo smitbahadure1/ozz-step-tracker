@@ -43,6 +43,7 @@ import * as d3 from "d3-shape";
 import * as Haptics from "expo-haptics";
 import { useAppStore } from "./store/useAppStore";
 import Onboarding from "./Onboarding";
+import SignIn from "./SignIn";
 
 const { width: W } = Dimensions.get("window");
 
@@ -316,7 +317,8 @@ function DeficitVisual({ currentSteps = 0 }) {
 }
 
 function TrendVisual({ currentSteps = 0 }) {
-  const percent = Math.min(1, currentSteps / 10000);
+  const dailyStepGoal = useAppStore((s) => s.dailyStepGoal) || 10000;
+  const percent = Math.min(1, currentSteps / dailyStepGoal);
   const bars = [...Array(7)].map((_, i) =>
     Math.max(4, 28 * percent * (0.6 + i * 0.1)),
   );
@@ -809,6 +811,7 @@ function ExtendedBlockGridChart({ currentSteps = 0 }) {
 // ─── DETAIL SCREENS ────────────────────────────────────────────────────────
 
 function ActivityDetailScreen({ onBack, currentSteps = 0 }) {
+  const dailyStepGoal = useAppStore((s) => s.dailyStepGoal) || 10000;
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <View
@@ -938,7 +941,7 @@ function ActivityDetailScreen({ onBack, currentSteps = 0 }) {
                 color: C.blue,
               }}
             >
-              10,000
+              {dailyStepGoal.toLocaleString()}
             </Text>
           </View>
         </View>
@@ -2339,6 +2342,7 @@ function HeartRateDetailScreen({ onBack, heartRate = 0, setHeartRate }) {
 // ─── SUMMARY DETAIL SCREEN ────────────────────────────────────────────────
 
 function SummaryDetailScreen({ onBack, currentSteps = 0, runStats = { distanceKm: 0, caloriesBurned: 0 } }) {
+  const dailyStepGoal = useAppStore((s) => s.dailyStepGoal) || 10000;
   const stepDistance = currentSteps * 0.00044;
   const runDistance = runStats.distanceKm * 0.621371; // km to miles
   const distance = (stepDistance + runDistance).toFixed(2);
@@ -2347,7 +2351,7 @@ function SummaryDetailScreen({ onBack, currentSteps = 0, runStats = { distanceKm
   const calories = stepCalories + runStats.caloriesBurned;
 
   const floors = Math.floor(currentSteps / 500);
-  const progress = Math.min(100, Math.floor((currentSteps / 10000) * 100));
+  const progress = Math.min(100, Math.floor((currentSteps / dailyStepGoal) * 100));
   const activeTime = Math.floor(currentSteps / 100) + Math.floor(runStats.durationSec / 60);
 
   return (
@@ -2627,7 +2631,8 @@ function DeficitDetailScreen({ onBack, currentSteps = 0 }) {
 }
 
 function TrendDetailScreen({ onBack, currentSteps = 0 }) {
-  const progress = Math.min(100, Math.floor((currentSteps / 10000) * 100));
+  const dailyStepGoal = useAppStore((s) => s.dailyStepGoal) || 10000;
+  const progress = Math.min(100, Math.floor((currentSteps / dailyStepGoal) * 100));
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <View
@@ -2766,13 +2771,15 @@ function SettingsRow({
 function AccountProfileScreen() {
   const userName = useAppStore((st) => st.userName);
   const setHasOnboarded = useAppStore((st) => st.setHasOnboarded);
+  const setIsSignedIn = useAppStore((st) => st.setIsSignedIn);
+  const dailyStepGoal = useAppStore((s) => s.dailyStepGoal) || 10000;
+  const setDailyStepGoal = useAppStore((s) => s.setDailyStepGoal);
   const displayName = userName.trim() || "Athlete";
   const initial = displayName.charAt(0).toUpperCase();
 
   // Functional states for the prototype UI
   const [unit, setUnit] = useState("Metric");
   const [lang, setLang] = useState("English");
-  const [steps, setSteps] = useState("10,000");
   const [cals, setCals] = useState("2,400 kcal");
   const [water, setWater] = useState("2.5 L");
 
@@ -2787,9 +2794,9 @@ function AccountProfileScreen() {
   };
 
   const cycleSteps = () => {
-    if (steps === "10,000") setSteps("12,000");
-    else if (steps === "12,000") setSteps("15,000");
-    else setSteps("10,000");
+    if (dailyStepGoal === 10000) setDailyStepGoal(12000);
+    else if (dailyStepGoal === 12000) setDailyStepGoal(15000);
+    else setDailyStepGoal(10000);
   };
 
   const cycleCals = () => {
@@ -2879,7 +2886,7 @@ function AccountProfileScreen() {
         <SettingsRow
           icon="walk-outline"
           label="Daily Steps"
-          value={steps}
+          value={dailyStepGoal.toLocaleString()}
           onPress={cycleSteps}
         />
         <SettingsRow
@@ -2965,7 +2972,7 @@ function AccountProfileScreen() {
         <SettingsRow
           icon="log-out-outline"
           label="Log Out"
-          onPress={() => setHasOnboarded(false)}
+          onPress={() => setIsSignedIn(false)}
           isDestructive
           hideBorder
         />
@@ -3097,6 +3104,7 @@ export default function App() {
   });
   const hasHydrated = useAppStore((st) => st._hasHydrated);
   const hasOnboarded = useAppStore((st) => st.hasOnboarded);
+  const isSignedIn = useAppStore((st) => st.isSignedIn);
 
   if ((!fontsLoaded && !fontError) || !hasHydrated) {
     return (
@@ -3108,6 +3116,10 @@ export default function App() {
 
   if (!hasOnboarded) {
     return <Onboarding />;
+  }
+
+  if (!isSignedIn) {
+    return <SignIn />;
   }
 
   return <MainApp />;
@@ -3141,6 +3153,7 @@ function MainApp() {
   const heartRate = useAppStore((s) => s.heartRate);
   const setHeartRate = useAppStore((s) => s.setHeartRate);
   const userName = useAppStore((st) => st.userName);
+  const dailyStepGoal = useAppStore((s) => s.dailyStepGoal) || 10000;
 
   // Run stats for today (from Program tab), added into Home's totals
   const runs = useAppStore((s) => s.runs);
@@ -3236,7 +3249,7 @@ function MainApp() {
   if (hour >= 12 && hour < 17) greeting = "Afternoon";
   else if (hour >= 17) greeting = "Evening";
 
-  const goalPercentage = Math.min(100, Math.round((totalSteps / 10000) * 100));
+  const goalPercentage = Math.min(100, Math.round((totalSteps / dailyStepGoal) * 100));
 
   return (
     <SafeAreaView style={s.safe}>
@@ -3467,7 +3480,7 @@ function MainApp() {
                       </View>
                       <Text style={s.metricLabel}>Steps behind</Text>
                       <Text style={[s.metricValue, { color: C.blue }]}>
-                        {Math.max(0, 10000 - totalSteps).toLocaleString()}
+                        {Math.max(0, dailyStepGoal - totalSteps).toLocaleString()}
                       </Text>
                     </View>
                     <View
@@ -3509,7 +3522,7 @@ function MainApp() {
 
                       <Text style={s.metricLabel}>Daily Goal</Text>
                       <Text style={[s.metricValue, { color: C.orange }]}>
-                        {Math.min(100, Math.floor((totalSteps / 10000) * 100))}%
+                        {Math.min(100, Math.floor((totalSteps / dailyStepGoal) * 100))}%
                       </Text>
                     </View>
                     <View

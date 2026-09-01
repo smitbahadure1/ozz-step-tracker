@@ -12,13 +12,24 @@
     },
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMotionUsageDescription": "This app needs access to your motion data to count your daily steps.",
+        "NSLocationWhenInUseUsageDescription": "This app needs access to your location to track your runs on the map."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/app_icon.jpg"
-      }
+      },
+      "permissions": [
+        "ACTIVITY_RECOGNITION",
+        "android.permission.ACTIVITY_RECOGNITION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
+      "package": "com.nidhi9619.ozzz"
     },
     "web": {
       "favicon": "./assets/favicon.png"

@@ -8,11 +8,20 @@ export const useAppStore = create(
       _hasHydrated: false,
       setHasHydrated: (val) => set({ _hasHydrated: val }),
 
-      // ── ONBOARDING ──────────────────────────────────────────────────────
+      // ── ONBOARDING & AUTH ───────────────────────────────────────────────
       hasOnboarded: false,
       setHasOnboarded: (val) => set({ hasOnboarded: val }),
+      isSignedIn: false,
+      setIsSignedIn: (val) => set({ isSignedIn: val }),
       userName: "",
       setUserName: (name) => set({ userName: name }),
+      userGoal: "", // "lose_weight" or "daily_activity"
+      setUserGoal: (goal) => set({ userGoal: goal }),
+      userFitnessLevel: "", // "beginner", "intermediate", "advanced", "athletic"
+      setUserFitnessLevel: (level) => set({ userFitnessLevel: level }),
+      dailyStepGoal: 10000,
+      setDailyStepGoal: (goal) => set({ dailyStepGoal: goal }),
+
 
       // ── PEDOMETER (STEPS) ──────────────────────────────────────────────
       pastStepCount: 0,
@@ -91,7 +100,11 @@ export const useAppStore = create(
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
         hasOnboarded: state.hasOnboarded,
+        isSignedIn: state.isSignedIn,
         userName: state.userName,
+        userGoal: state.userGoal,
+        userFitnessLevel: state.userFitnessLevel,
+        dailyStepGoal: state.dailyStepGoal,
       }),
       onRehydrateStorage: () => () => {
         useAppStore.setState({ _hasHydrated: true });
