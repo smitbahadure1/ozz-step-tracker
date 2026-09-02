@@ -28,8 +28,12 @@ export const useAppStore = create(
       // ── PEDOMETER (STEPS) ──────────────────────────────────────────────
       pastStepCount: 0,
       currentStepCount: 0,
+      androidBootStepsBaseline: -1,
+      lastStepDate: new Date().toDateString(),
       setPastStepCount: (n) => set({ pastStepCount: n }),
       setCurrentStepCount: (n) => set({ currentStepCount: n }),
+      setAndroidBootStepsBaseline: (n) => set({ androidBootStepsBaseline: n }),
+      setLastStepDate: (dateStr) => set({ lastStepDate: dateStr }),
 
       // ── MANUAL DAILY LOGS ──────────────────────────────────────────────
       sleepHours: 0,
@@ -40,8 +44,17 @@ export const useAppStore = create(
       waterGlasses: 0,
       setWaterGlasses: (n) => set({ waterGlasses: n }),
 
-      weightKg: 0,
+      weightKg: 75,
       setWeightKg: (n) => set({ weightKg: n }),
+
+      heightCm: 175,
+      setHeightCm: (n) => set({ heightCm: n }),
+
+      healthSync: false,
+      setHealthSync: (val) => set({ healthSync: val }),
+
+      reminders: true,
+      setReminders: (val) => set({ reminders: val }),
 
       heartRate: 0,
       setHeartRate: (n) => set({ heartRate: n }),
@@ -114,6 +127,14 @@ export const useAppStore = create(
         userFitnessLevel: state.userFitnessLevel,
         dailyStepGoal: state.dailyStepGoal,
         runs: state.runs,
+        pastStepCount: state.pastStepCount,
+        currentStepCount: state.currentStepCount,
+        androidBootStepsBaseline: state.androidBootStepsBaseline,
+        lastStepDate: state.lastStepDate,
+        weightKg: state.weightKg,
+        heightCm: state.heightCm,
+        healthSync: state.healthSync,
+        reminders: state.reminders,
       }),
       onRehydrateStorage: () => () => {
         useAppStore.setState({ _hasHydrated: true });

@@ -30,6 +30,7 @@ import {
   BackHandler,
   FlatList,
   Alert,
+  Switch,
 } from "react-native";
 
 import Svg, {
@@ -45,6 +46,9 @@ import Svg, {
 } from "react-native-svg";
 import * as d3 from "d3-shape";
 import * as Haptics from "expo-haptics";
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+const Stack = createNativeStackNavigator();
 import { useAppStore } from "./store/useAppStore";
 import Onboarding from "./Onboarding";
 import SignIn from "./SignIn";
@@ -2778,6 +2782,48 @@ function AppleWalletRow({ icon, label, value, onPress, isDestructive, hideBorder
   );
 }
 
+
+function AppleWalletSwitchRow({ icon, label, value, onValueChange, color }) {
+  const tint = color || '#ffffff';
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        backgroundColor: 'transparent',
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <View style={{
+          width: 40, height: 40, borderRadius: 12,
+          backgroundColor: 'rgba(255, 255, 255, 0.04)',
+          borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.08)',
+          alignItems: 'center', justifyContent: 'center', marginRight: 16,
+          shadowColor: tint, shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.15, shadowRadius: 12,
+        }}>
+          <Ionicons name={icon} size={20} color={tint} />
+        </View>
+        <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 16, color: "#ffffff", letterSpacing: -0.3 }}>
+          {label}
+        </Text>
+      </View>
+      <Switch 
+        value={value} 
+        onValueChange={(val) => {
+          Haptics.selectionAsync();
+          onValueChange(val);
+        }} 
+        trackColor={{ false: 'rgba(255,255,255,0.1)', true: '#34c759' }}
+        thumbColor="#ffffff"
+      />
+    </View>
+  );
+}
+
 function AccountProfileScreen({ setCurrentScreen }) {
   const userName = useAppStore((st) => st.userName);
   const setHasOnboarded = useAppStore((st) => st.setHasOnboarded);
@@ -2786,12 +2832,21 @@ function AccountProfileScreen({ setCurrentScreen }) {
   const setIsDarkMode = useAppStore((st) => st.setIsDarkMode);
   const dailyStepGoal = useAppStore((s) => s.dailyStepGoal) || 10000;
   const setDailyStepGoal = useAppStore((s) => s.setDailyStepGoal);
+  const weightKg = useAppStore((s) => s.weightKg);
+  const setWeightKg = useAppStore((s) => s.setWeightKg);
+  const heightCm = useAppStore((s) => s.heightCm);
+  const setHeightCm = useAppStore((s) => s.setHeightCm);
+  const healthSync = useAppStore((s) => s.healthSync);
+  const setHealthSync = useAppStore((s) => s.setHealthSync);
+  const reminders = useAppStore((s) => s.reminders);
+  const setReminders = useAppStore((s) => s.setReminders);
+
   const displayName = userName.trim() || "Athlete";
 
   const [unit, setUnit] = useState("Metric");
   const [lang, setLang] = useState("English");
-  const [cals, setCals] = useState("2,400 kcal");
-  const [water, setWater] = useState("2.5 L");
+  const [cals, setCals] = useState("2400");
+  const [water, setWater] = useState("2.5");
   
   const [activeDial, setActiveDial] = useState(null);
 
@@ -2800,23 +2855,31 @@ function AccountProfileScreen({ setCurrentScreen }) {
     switch (activeDial) {
       case 'goal': {
         const ACTUAL = Array.from({length: 26}, (_, i) => 5000 + (i * 1000));
-        return { title: "Adjust Daily Goal", subtitle: "Scroll the dial to set your target", data: ACTUAL, options: [null, ...ACTUAL, null], value: dailyStepGoal, onChange: setDailyStepGoal };
+        return { title: "Daily Step Goal", subtitle: "Scroll the dial to set your target", data: ACTUAL, options: [null, ...ACTUAL, null], value: dailyStepGoal, onChange: setDailyStepGoal, suffix: "steps" };
+      }
+      case 'weight': {
+        const ACTUAL = Array.from({length: 101}, (_, i) => 40 + i);
+        return { title: "Weight", subtitle: "Set your current weight", data: ACTUAL, options: [null, ...ACTUAL, null], value: weightKg, onChange: setWeightKg, suffix: unit === "Metric" ? "kg" : "lbs" };
+      }
+      case 'height': {
+        const ACTUAL = Array.from({length: 101}, (_, i) => 120 + i);
+        return { title: "Height", subtitle: "Set your current height", data: ACTUAL, options: [null, ...ACTUAL, null], value: heightCm, onChange: setHeightCm, suffix: unit === "Metric" ? "cm" : "in" };
+      }
+      case 'cals': {
+        const ACTUAL = Array.from({length: 21}, (_, i) => 1500 + (i * 100));
+        return { title: "Daily Calories", subtitle: "Set your daily calorie target", data: ACTUAL, options: [null, ...ACTUAL, null], value: parseInt(cals), onChange: (v) => setCals(v.toString()), suffix: "kcal" };
+      }
+      case 'water': {
+        const ACTUAL = Array.from({length: 11}, (_, i) => 1.0 + (i * 0.5));
+        return { title: "Daily Water", subtitle: "Set your daily hydration goal", data: ACTUAL, options: [null, ...ACTUAL, null], value: parseFloat(water), onChange: (v) => setWater(v.toFixed(1)), suffix: "L" };
       }
       case 'unit': {
         const ACTUAL = ["Metric", "Imperial"];
-        return { title: "Measurement Units", subtitle: "Select your preferred unit system", data: ACTUAL, options: [null, ...ACTUAL, null], value: unit, onChange: setUnit };
+        return { title: "Measurement Units", subtitle: "Select your preferred unit system", data: ACTUAL, options: [null, ...ACTUAL, null], value: unit, onChange: setUnit, suffix: "" };
       }
       case 'lang': {
         const ACTUAL = ["English", "Español", "Français"];
-        return { title: "App Language", subtitle: "Select your preferred language", data: ACTUAL, options: [null, ...ACTUAL, null], value: lang, onChange: setLang };
-      }
-      case 'cals': {
-        const ACTUAL = Array.from({length: 21}, (_, i) => `${(1500 + (i * 100)).toLocaleString()} kcal`);
-        return { title: "Daily Calories", subtitle: "Set your daily calorie target", data: ACTUAL, options: [null, ...ACTUAL, null], value: cals, onChange: setCals };
-      }
-      case 'water': {
-        const ACTUAL = Array.from({length: 11}, (_, i) => `${(1.0 + (i * 0.5)).toFixed(1)} L`);
-        return { title: "Daily Water", subtitle: "Set your daily hydration goal", data: ACTUAL, options: [null, ...ACTUAL, null], value: water, onChange: setWater };
+        return { title: "App Language", subtitle: "Select your preferred language", data: ACTUAL, options: [null, ...ACTUAL, null], value: lang, onChange: setLang, suffix: "" };
       }
       default: return null;
     }
@@ -2824,27 +2887,26 @@ function AccountProfileScreen({ setCurrentScreen }) {
   const dialConfig = getDialConfig();
   const ITEM_HEIGHT = 60;
 
-  // Handlers
-  
-  const showLegalAlert = (title) => {
+    const showLegalAlert = (title) => {
     Alert.alert(title, "This is a functional prototype. The full terms and privacy policy will be available in the production release.", [{ text: "Understood", style: "default" }]);
   };
   const showVersionInfo = () => {
     Alert.alert("App Version", "You are running the latest version: v1.0.0 (Build 42)");
   };
 
+const ListGroup = ({ title, children }) => (
+    <View style={{ marginBottom: 32 }}>
+      <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 14, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12, marginLeft: 16 }}>{title}</Text>
+      <View style={{ borderRadius: 24, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.06)' }}>
+        {children}
+      </View>
+    </View>
+  );
+
   return (
-    <View style={{ 
-      backgroundColor: '#000000', // Dark mode background 
-      marginHorizontal: -16, 
-      marginTop: -10, 
-      paddingTop: 10,
-      paddingHorizontal: 20,
-      paddingBottom: 80,
-      minHeight: Dimensions.get('window').height
-    }}>
+    <View style={{ backgroundColor: '#000000', marginHorizontal: -16, marginTop: -10, paddingTop: 10, paddingHorizontal: 8, paddingBottom: 80, minHeight: Dimensions.get('window').height }}>
       
-      {/* ── HERO PROFILE (APPLE CARD STYLE) ── */}
+      {/* ── HERO PROFILE (APPLE FITNESS STYLE) ── */}
       <View style={{ alignItems: 'center', marginTop: 16, marginBottom: 32 }}>
         <ExpoLinearGradient
           colors={['#9c89ff', '#f089e6', '#ffb95e']}
@@ -2853,13 +2915,13 @@ function AccountProfileScreen({ setCurrentScreen }) {
           style={{
             width: '100%',
             height: 220,
-            borderRadius: 16,
+            borderRadius: 24,
             padding: 24,
             justifyContent: 'space-between',
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.1,
-            shadowRadius: 10,
+            shadowColor: '#f089e6',
+            shadowOffset: { width: 0, height: 8 },
+            shadowOpacity: 0.2,
+            shadowRadius: 16,
             elevation: 5
           }}
         >
@@ -2868,96 +2930,43 @@ function AccountProfileScreen({ setCurrentScreen }) {
           </View>
           
           <View>
-            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 18, color: '#333', marginBottom: 4 }}>
+            <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 26, color: '#ffffff', marginBottom: 4, letterSpacing: -0.5 }}>
               {displayName}
             </Text>
-            <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: 'rgba(0,0,0,0.4)' }}>
-              Ozzz Pro Member
+            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: 'rgba(255,255,255,0.9)' }}>
+              {dailyStepGoal.toLocaleString()} Steps Daily
             </Text>
           </View>
           
-          <View style={{ position: 'absolute', bottom: 24, right: 24 }}>
-            <Ionicons name="aperture" size={36} color="rgba(0,0,0,0.15)" />
+          <View style={{ position: 'absolute', bottom: -10, right: -10 }}>
+            <Ionicons name="aperture" size={120} color="rgba(255,255,255,0.15)" />
           </View>
         </ExpoLinearGradient>
       </View>
 
-      {/* ── STATS CARDS (VERTICAL STACK) ── */}
-      <View style={{ marginBottom: 32 }}>
-        
-        {/* Card Balance / Total Steps */}
-        <TouchableOpacity 
-          onPress={() => setCurrentScreen("ActivityDetail")} 
-          activeOpacity={0.7} 
-          style={{ backgroundColor: '#000000', borderRadius: 20, padding: 20, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
-        >
-          <View>
-            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#ffffff', marginBottom: 8 }}>Total Steps Balance</Text>
-            <Text adjustsFontSizeToFit numberOfLines={1} style={{ fontFamily: 'Inter_800ExtraBold', fontSize: 36, color: '#ffffff', letterSpacing: -1 }}>
-              {dailyStepGoal.toLocaleString()}
-            </Text>
-          </View>
-          <View style={{ backgroundColor: '#2C2C2E', borderRadius: 20, paddingVertical: 8, paddingHorizontal: 16 }}>
-            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: '#ffffff' }}>View</Text>
-          </View>
-        </TouchableOpacity>
-
-        {/* Yearly Activity (Mock Bar Chart) */}
-        <TouchableOpacity 
-          onPress={() => Alert.alert("Weekly Activity", "The actual weekly activity charts page is still being designed!")} 
-          activeOpacity={0.7} 
-          style={{ backgroundColor: '#000000', borderRadius: 20, padding: 20, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)' }}
-        >
-          <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#ffffff', marginBottom: 4 }}>Weekly Activity</Text>
-          <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 12, color: '#8e8e93', marginBottom: 20 }}>This Week</Text>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', height: 60, paddingHorizontal: 10 }}>
-            {[0.3, 0.6, 0.4, 0.9, 0.7, 0.5, 0.8].map((val, i) => (
-              <View key={i} style={{ width: 14, height: val * 60, backgroundColor: i === 1 ? '#9c89ff' : '#2C2C2E', borderRadius: 7 }} />
-            ))}
-          </View>
-        </TouchableOpacity>
-
-        {/* Daily Goal */}
-        <View style={{ backgroundColor: '#000000', borderRadius: 20, padding: 20, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <View>
-            <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#ffffff', marginBottom: 8 }}>Daily Goal</Text>
-            <Text adjustsFontSizeToFit numberOfLines={1} style={{ fontFamily: 'Inter_800ExtraBold', fontSize: 36, color: '#ffffff', letterSpacing: -1 }}>
-              {dailyStepGoal >= 1000 ? `${dailyStepGoal / 1000}k` : dailyStepGoal}
-            </Text>
-          </View>
-          <TouchableOpacity 
-            onPress={() => setActiveDial('goal')} 
-            style={{ backgroundColor: '#2C2C2E', borderRadius: 24, paddingVertical: 14, paddingHorizontal: 24, alignItems: 'center' }}
-          >
-            <Text adjustsFontSizeToFit numberOfLines={1} style={{ fontFamily: 'Inter_600SemiBold', fontSize: 15, color: '#ffffff' }}>Change Goal</Text>
-          </TouchableOpacity>
-        </View>
-
-      </View>
-
-      {/* ── PREFERENCES & SETTINGS ── */}
-      <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 18, color: '#ffffff', marginBottom: 16, marginLeft: 8 }}>Preferences & Settings</Text>
+      {/* ── GROUPED SETTINGS ── */}
       
-      <View style={{ borderRadius: 16, overflow: 'hidden', backgroundColor: '#000000', marginBottom: 40, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)' }}>
-        <AppleWalletRow icon="calculator-outline" color="#007aff" label="Units" value={unit} onPress={() => setActiveDial('unit')} />
-        <AppleWalletRow icon="language-outline" color="#34c759" label="Language" value={lang} onPress={() => setActiveDial('lang')} />
-        <AppleWalletRow icon="flame-outline" color="#ff3b30" label="Daily Calories" value={cals} onPress={() => setActiveDial('cals')} />
-        <AppleWalletRow icon="water-outline" color="#32ade6" label="Daily Water" value={water} onPress={() => setActiveDial('water')} />
-        <AppleWalletRow icon="document-text-outline" color="#5856d6" label="Terms of Service" onPress={() => showLegalAlert("Terms")} />
-        <AppleWalletRow icon="shield-checkmark-outline" color="#ff9500" label="Privacy Policy" onPress={() => showLegalAlert("Privacy")} />
+      <ListGroup title="Body Metrics & Goals">
+        <AppleWalletRow icon="person-outline" color="#ff9500" label="Height" value={heightCm + (unit === "Metric" ? " cm" : " in")} onPress={() => setActiveDial('height')} />
+        <AppleWalletRow icon="barbell-outline" color="#34c759" label="Weight" value={weightKg + (unit === "Metric" ? " kg" : " lbs")} onPress={() => setActiveDial('weight')} />
+        <AppleWalletRow icon="footsteps-outline" color="#b8ff1f" label="Daily Step Goal" value={dailyStepGoal.toLocaleString()} onPress={() => setActiveDial('goal')} />
+        <AppleWalletRow icon="flame-outline" color="#ff3b30" label="Daily Calories" value={cals + " kcal"} onPress={() => setActiveDial('cals')} />
+        <AppleWalletRow icon="water-outline" color="#32ade6" label="Daily Water" value={water + " L"} onPress={() => setActiveDial('water')} />
+      </ListGroup>
+
+
+      <ListGroup title="Preferences">
+        <AppleWalletRow icon="calculator-outline" color="#5856d6" label="Units" value={unit} onPress={() => setActiveDial('unit')} />
+        <AppleWalletRow icon="language-outline" color="#ff9500" label="Language" value={lang} onPress={() => setActiveDial('lang')} />
+        <AppleWalletRow icon={isDarkMode ? "moon-outline" : "sunny-outline"} color="#ffcc00" label="Appearance" value={isDarkMode ? "Dark" : "Light"} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsDarkMode(!isDarkMode); }} />
+      </ListGroup>
+
+      <ListGroup title="Account & Legal">
+        <AppleWalletRow icon="document-text-outline" color="#8e8e93" label="Terms of Service" onPress={() => showLegalAlert("Terms")} />
+        <AppleWalletRow icon="shield-checkmark-outline" color="#8e8e93" label="Privacy Policy" onPress={() => showLegalAlert("Privacy")} />
         <AppleWalletRow icon="information-circle-outline" color="#8e8e93" label="App Version" value="v1.0.0" onPress={showVersionInfo} />
-        <AppleWalletRow
-          icon={isDarkMode ? "moon-outline" : "sunny-outline"}
-          color="#ffcc00"
-          label="Appearance"
-          value={isDarkMode ? "Dark" : "Light"}
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            setIsDarkMode(!isDarkMode);
-          }}
-        />
-        <AppleWalletRow icon="log-out-outline" label="Log Out" onPress={() => setIsSignedIn(false)} isDestructive hideBorder />
-      </View>
+        <AppleWalletRow icon="log-out-outline" color="#ff3b30" label="Log Out" onPress={() => setIsSignedIn(false)} isDestructive />
+      </ListGroup>
       
       {/* ── UNIFIED DIAL MODAL ── */}
       <Modal visible={activeDial !== null} transparent animationType="slide">
@@ -2974,7 +2983,7 @@ function AccountProfileScreen({ setCurrentScreen }) {
               {/* WHEEL DIAL */}
               <View style={{ height: ITEM_HEIGHT * 3, overflow: 'hidden', justifyContent: 'center', marginBottom: 40 }}>
                 <FlatList
-                  key={activeDial} // Remounts list when dial type changes to reset scroll
+                  key={activeDial}
                   data={dialConfig.options}
                   keyExtractor={(item, index) => index.toString()}
                   showsVerticalScrollIndicator={false}
@@ -2998,57 +3007,42 @@ function AccountProfileScreen({ setCurrentScreen }) {
                     if (item === null) return <View style={{ height: ITEM_HEIGHT }} />;
                     const isSelected = item === dialConfig.value;
                     return (
-                      <View style={{ height: ITEM_HEIGHT, justifyContent: 'center', alignItems: 'center' }}>
+                      <View style={{ height: ITEM_HEIGHT, justifyContent: 'center', alignItems: 'center', flexDirection: 'row' }}>
                         <Text adjustsFontSizeToFit numberOfLines={1} style={{ 
-                          fontFamily: 'Inter_600SemiBold', 
-                          fontSize: isSelected ? 32 : 22, 
-                          color: isSelected ? '#ffffff' : '#8e8e93',
-                          opacity: isSelected ? 1 : 0.4,
-                          includeFontPadding: false,
-                          textAlignVertical: 'center',
-                          paddingHorizontal: 16
+                          fontFamily: 'Inter_600SemiBold', fontSize: isSelected ? 32 : 22, 
+                          color: isSelected ? '#ffffff' : '#8e8e93', opacity: isSelected ? 1 : 0.4,
+                          includeFontPadding: false, textAlignVertical: 'center', paddingHorizontal: 4
                         }}>
                           {item.toLocaleString()}
                         </Text>
+                        {dialConfig.suffix && isSelected && (
+                          <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 16, color: 'rgba(255,255,255,0.5)', marginTop: 8 }}>
+                            {dialConfig.suffix}
+                          </Text>
+                        )}
                       </View>
                     );
                   }}
                 />
-                {/* Center Highlight Overlay */}
-                <View 
-                  style={{ 
-                    position: 'absolute', top: ITEM_HEIGHT, width: '100%', height: ITEM_HEIGHT, 
-                    borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#333', zIndex: -1 
-                  }} 
-                  pointerEvents="none" 
-                />
+                <View style={{ position: 'absolute', top: ITEM_HEIGHT, width: '100%', height: ITEM_HEIGHT, borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#333', zIndex: -1 }} pointerEvents="none" />
               </View>
 
-              <TouchableOpacity 
-                onPress={() => {
-                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                  setActiveDial(null);
-                }} 
-                style={{ backgroundColor: '#ffffff', paddingVertical: 18, borderRadius: 30, alignItems: 'center' }}
-              >
+              <TouchableOpacity onPress={() => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); setActiveDial(null); }} style={{ backgroundColor: '#ffffff', paddingVertical: 18, borderRadius: 30, alignItems: 'center' }}>
                 <Text style={{ fontFamily: 'Inter_700Bold', fontSize: 18, color: '#000000' }}>Done</Text>
               </TouchableOpacity>
-
-              <TouchableOpacity 
-                onPress={() => setActiveDial(null)} 
-                style={{ paddingVertical: 18, alignItems: 'center', marginTop: 8 }}
-              >
+              <TouchableOpacity onPress={() => setActiveDial(null)} style={{ paddingVertical: 18, alignItems: 'center', marginTop: 8 }}>
                 <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 16, color: '#8e8e93' }}>Close</Text>
               </TouchableOpacity>
-
             </View>
           </View>
         )}
       </Modal>
 
+      
     </View>
   );
 }
+
 
 // ─── TAB BAR ───────────────────────────────────────────────────────────────
 
@@ -3183,15 +3177,19 @@ export default function App() {
     );
   }
 
-  if (!hasOnboarded) {
-    return <Onboarding />;
-  }
-
-  if (!isSignedIn) {
-    return <SignIn />;
-  }
-
-  return <MainApp />;
+  return (
+    <NavigationContainer>
+      <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
+        {!hasOnboarded ? (
+          <Stack.Screen name="Onboarding" component={Onboarding} />
+        ) : !isSignedIn ? (
+          <Stack.Screen name="SignIn" component={SignIn} />
+        ) : (
+          <Stack.Screen name="MainApp" component={MainApp} />
+        )}
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
 }
 
 function MainApp() {
@@ -3278,21 +3276,63 @@ function MainApp() {
           const start = new Date();
           start.setHours(0, 0, 0, 0); // Start of today
 
-          try {
-            const pastStepsResult = await Pedometer.getStepCountAsync(
-              start,
-              end,
-            );
-            if (pastStepsResult) {
-              setPastStepCount(pastStepsResult.steps);
-            }
-          } catch (e) {
-            console.log("Could not get past steps:", e);
+          const todayStr = start.toDateString();
+          const currentState = useAppStore.getState();
+          if (currentState.lastStepDate !== todayStr) {
+            useAppStore.getState().setPastStepCount(0);
+            useAppStore.getState().setCurrentStepCount(0);
+            useAppStore.getState().setAndroidBootStepsBaseline(-1);
+            useAppStore.getState().setLastStepDate(todayStr);
           }
 
-          subscription = Pedometer.watchStepCount((result) => {
-            setCurrentStepCount(result.steps);
-          });
+          if (Platform.OS === 'ios') {
+            try {
+              const pastStepsResult = await Pedometer.getStepCountAsync(
+                start,
+                end,
+              );
+              if (pastStepsResult) {
+                setPastStepCount(pastStepsResult.steps);
+              }
+            } catch (e) {
+              console.log("Could not get past steps:", e);
+            }
+
+            subscription = Pedometer.watchStepCount((result) => {
+              setCurrentStepCount(result.steps);
+            });
+          } else {
+            subscription = Pedometer.watchStepCount((result) => {
+              const state = useAppStore.getState();
+              const currentToday = new Date().toDateString();
+
+              if (state.lastStepDate !== currentToday) {
+                useAppStore.getState().setPastStepCount(0);
+                useAppStore.getState().setCurrentStepCount(0);
+                useAppStore.getState().setAndroidBootStepsBaseline(result.steps);
+                useAppStore.getState().setLastStepDate(currentToday);
+                return;
+              }
+
+              let bootBaseline = state.androidBootStepsBaseline;
+              if (bootBaseline === -1) {
+                useAppStore.getState().setAndroidBootStepsBaseline(result.steps);
+                bootBaseline = result.steps;
+              }
+
+              let delta = result.steps - bootBaseline;
+              if (delta < 0) {
+                // Device rebooted
+                const previousCurrent = state.currentStepCount;
+                useAppStore.getState().setPastStepCount(state.pastStepCount + previousCurrent);
+                useAppStore.getState().setAndroidBootStepsBaseline(0);
+                bootBaseline = 0;
+                delta = result.steps;
+              }
+
+              useAppStore.getState().setCurrentStepCount(delta);
+            });
+          }
         }
       } catch (e) {
         console.log("Pedometer error:", e);
